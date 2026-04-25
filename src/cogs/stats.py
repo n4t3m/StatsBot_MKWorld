@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 import API.get_mkworld as api
 import common.constants as constants
 import common.data_handler as data_handler
-from common.plotting import create_plot
+from common.plotting import create_plot, create_tiers_plot
 from common.calculation import calc_mmr_deltas
 
 # load environment variables from .env file
@@ -454,6 +454,180 @@ class Stats(commands.Cog):
         )
 
         await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(
+        name="tiers", description="Show MKWorld Player Performance by Tier"
+    )
+    @app_commands.describe(
+        name="Lounge name, discord id, mkc id (optional)",
+        season="Season number (default: current season)",
+        game_mode="Game mode (default: 24p)",
+    )
+    @app_commands.choices(
+        game_mode=[
+            app_commands.Choice(name="24p", value="24p"),
+            app_commands.Choice(name="12p", value="12p"),
+        ]
+    )
+    async def tiers(
+        self,
+        interaction: discord.Interaction,
+        name: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = "24p",
+    ):
+        await interaction.response.defer()
+
+        if name is None:
+            name = str(interaction.user.id)
+        player = await data_handler.fetch_player_info(name, season, game_mode)
+
+        if player is None:
+            await interaction.followup.send(
+                f"Player '{name}' not found.", ephemeral=True
+            )
+            return
+
+        table_events = [
+            e for e in player.get("mmrChanges", []) if e.get("reason") == "Table"
+        ]
+        if not table_events:
+            await interaction.followup.send(
+                "You have to play at least 1 match to check your tier stats.",
+                ephemeral=True,
+            )
+            return
+
+        tier_order = [
+            "SQ",
+            "X",
+            "S",
+            "AB",
+            "A",
+            "B",
+            "BC",
+            "C",
+            "CD",
+            "D",
+            "DE",
+            "E",
+            "EF",
+            "F",
+        ]
+
+        buckets = {}
+        for e in table_events:
+            t = e.get("tier", "?")
+            b = buckets.setdefault(
+                t,
+                {
+                    "events": 0,
+                    "delta_sum": 0,
+                    "rank_sum": 0,
+                    "score_sum": 0,
+                    "wins": 0,
+                    "win_delta_sum": 0,
+                    "loss_delta_sum": 0,
+                    "losses": 0,
+                    "firsts": 0,
+                    "tops": 0,
+                    "bottoms": 0,
+                },
+            )
+            b["events"] += 1
+            delta = e.get("mmrDelta", 0)
+            rank = e.get("rank", 0)
+            num_teams = e.get("numTeams", 1) or 1
+            b["delta_sum"] += delta
+            b["rank_sum"] += rank
+            b["score_sum"] += e.get("score", 0)
+            if delta > 0:
+                b["wins"] += 1
+                b["win_delta_sum"] += delta
+            elif delta < 0:
+                b["losses"] += 1
+                b["loss_delta_sum"] += delta
+            if rank == 1:
+                b["firsts"] += 1
+            if rank <= num_teams * 0.25:
+                b["tops"] += 1
+            if rank > num_teams * 0.75:
+                b["bottoms"] += 1
+
+        sorted_tiers = sorted(
+            buckets.items(),
+            key=lambda kv: (
+                tier_order.index(kv[0]) if kv[0] in tier_order else len(tier_order)
+            ),
+        )
+
+        tier_rows = []
+        for tier_name, b in sorted_tiers:
+            n = b["events"]
+            tier_rows.append(
+                {
+                    "tier": tier_name,
+                    "n": n,
+                    "win_rate": b["wins"] / n * 100,
+                    "avg_delta": b["delta_sum"] / n,
+                    "total": b["delta_sum"],
+                    "avg_rank": b["rank_sum"] / n,
+                    "avg_score": b["score_sum"] / n,
+                    "firsts": b["firsts"],
+                    "tops": b["tops"],
+                    "bottoms": b["bottoms"],
+                }
+            )
+
+        plot_image = create_tiers_plot(
+            tier_rows=tier_rows,
+            season=season,
+            player_name=player["name"],
+            country_code=player.get("countryCode", ""),
+            game_mode=game_mode,
+        )
+        file = discord.File(plot_image, filename="tiers.png")
+
+        rank_data = constants.get_rank_data(season)[player["rank"]]
+        embed = discord.Embed(
+            title=f"S{season} Tiers - MKWorld{game_mode.upper()}",
+            url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}?p={game_mode[0:1]}",
+            description=f"### {player['name']} [{player['countryCode']}]",
+            colour=int(f"0x{rank_data['color'][1:]}", 16),
+            timestamp=dt.datetime.now(dt.UTC),
+        )
+        embed.set_image(url="attachment://tiers.png")
+
+        best_tier = max(
+            sorted_tiers, key=lambda kv: kv[1]["delta_sum"] / kv[1]["events"]
+        )
+        worst_tier = min(
+            sorted_tiers, key=lambda kv: kv[1]["delta_sum"] / kv[1]["events"]
+        )
+        most_played = max(sorted_tiers, key=lambda kv: kv[1]["events"])
+        embed.add_field(
+            name="Best Tier",
+            value=f"{best_tier[0]} ({best_tier[1]['delta_sum'] / best_tier[1]['events']:+.0f} avg)",
+            inline=True,
+        )
+        embed.add_field(
+            name="Worst Tier",
+            value=f"{worst_tier[0]} ({worst_tier[1]['delta_sum'] / worst_tier[1]['events']:+.0f} avg)",
+            inline=True,
+        )
+        embed.add_field(
+            name="Most Played",
+            value=f"{most_played[0]} ({most_played[1]['events']} events)",
+            inline=True,
+        )
+
+        embed.set_footer(
+            text="MKCentral Lounge",
+            icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
+        )
+        embed.set_thumbnail(url=rank_data["url"])
+
+        await interaction.followup.send(embed=embed, file=file)
 
     @app_commands.command(name="calc", description="Calculate Expected MMR changes")
     @app_commands.describe(table_id="Table ID for the match")
