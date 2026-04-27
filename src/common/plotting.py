@@ -210,3 +210,168 @@ def create_plot(mmrhistory: list, season: int, player_name: str, game_mode: str)
     fig.clf()
 
     return b
+
+
+def create_tiers_plot(
+    tier_rows: list,
+    season: int,
+    player_name: str,
+    country_code: str,
+    game_mode: str,
+):
+    """Render a per-tier breakdown as a styled image table.
+
+    tier_rows: list of dicts with keys
+        tier, n, win_rate, avg_delta, total, avg_rank, avg_score,
+        firsts, podiums, bottoms
+    """
+    b = BytesIO()
+
+    matplotlib.rcParams.update(
+        matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
+    )
+
+    if game_mode == "12p":
+        game_mode_display = "12 player"
+    elif game_mode == "24p":
+        game_mode_display = "24 player"
+    else:
+        game_mode_display = game_mode
+
+    headers = [
+        "Tier",
+        "Events",
+        "W%",
+        "Avg Δ",
+        "Total",
+        "Avg Rk",
+        "Avg Sc",
+        "1sts",
+        "Top¼",
+        "Btm¼",
+    ]
+
+    cell_text = []
+    delta_values = []
+    for r in tier_rows:
+        cell_text.append(
+            [
+                r["tier"],
+                f"{r['n']}",
+                f"{r['win_rate']:.0f}%",
+                f"{r['avg_delta']:+.0f}",
+                f"{r['total']:+d}",
+                f"{r['avg_rank']:.1f}",
+                f"{r['avg_score']:.1f}",
+                f"{r['firsts']}",
+                f"{r['tops']}",
+                f"{r['bottoms']}",
+            ]
+        )
+        delta_values.append(r["avg_delta"])
+
+    n_rows = len(cell_text)
+    row_h = 0.40
+    header_h = 0.45
+    title_h = 0.30
+    table_h = row_h * (n_rows + 1)
+    fig_height = header_h + title_h + table_h
+    fig = Figure(figsize=(10, fig_height))
+    gs = gridspec.GridSpec(
+        3,
+        1,
+        height_ratios=[header_h, title_h, table_h],
+        hspace=0.0,
+        figure=fig,
+    )
+
+    # --- Header ---
+    ax_header = fig.add_subplot(gs[0])
+    ax_header.set_axis_off()
+    try:
+        favicon = mpimg.imread("src/common/favicon.ico")
+        ax_inset = inset_axes(
+            ax_header,
+            width="4%",
+            height="80%",
+            loc="center left",
+            borderpad=0.5,
+        )
+        ax_inset.imshow(favicon)
+        ax_inset.set_axis_off()
+    except Exception:
+        pass
+    ax_header.text(
+        0.08,
+        0.5,
+        "MKCentral MKWorld Lounge",
+        transform=ax_header.transAxes,
+        fontsize=13,
+        fontweight="bold",
+        color="white",
+        verticalalignment="center",
+    )
+    ax_header.axhline(y=0, color="white", linewidth=0.5, alpha=0.3)
+
+    # --- Title ---
+    ax_title = fig.add_subplot(gs[1])
+    ax_title.set_axis_off()
+    flag = f" [{country_code}]" if country_code else ""
+    title_text = f"Season {season} ({game_mode_display}) Tier Data: {player_name}{flag}"
+    ax_title.text(
+        0.5,
+        0.5,
+        title_text,
+        transform=ax_title.transAxes,
+        fontsize=11,
+        color="white",
+        horizontalalignment="center",
+        verticalalignment="center",
+    )
+
+    # --- Table ---
+    ax = fig.add_subplot(gs[2])
+    ax.set_axis_off()
+
+    table = ax.table(
+        cellText=cell_text,
+        colLabels=headers,
+        cellLoc="center",
+        bbox=[0, 0, 1, 1],
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(11)
+
+    n_cols = len(headers)
+    avg_delta_col = headers.index("Avg Δ")
+    total_col = headers.index("Total")
+
+    for col in range(n_cols):
+        header_cell = table[(0, col)]
+        header_cell.set_facecolor("#08234a")
+        header_cell.set_edgecolor("white")
+        header_cell.set_text_props(color="white", fontweight="bold")
+
+    for row_i in range(1, n_rows + 1):
+        for col in range(n_cols):
+            cell = table[(row_i, col)]
+            cell.set_edgecolor("#3a5a8a")
+            cell.set_linewidth(0.5)
+            cell.set_facecolor("#0a2d61" if row_i % 2 == 1 else "#0d3674")
+            cell.set_text_props(color="white")
+
+        for col in (avg_delta_col, total_col):
+            val_str = cell_text[row_i - 1][col]
+            color = "#7CFF9E" if val_str.startswith("+") else "#FF7C8A"
+            if val_str in ("+0", "0"):
+                color = "white"
+            table[(row_i, col)].set_text_props(color=color, fontweight="bold")
+
+        tier_cell = table[(row_i, 0)]
+        tier_cell.set_text_props(color="white", fontweight="bold")
+
+    fig.savefig(b, format="png", bbox_inches="tight", dpi=150, pad_inches=0.1)
+    b.seek(0)
+    fig.clf()
+
+    return b
