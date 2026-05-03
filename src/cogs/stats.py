@@ -17,6 +17,7 @@ from common.plotting import (
     create_streak_plot,
     create_tiers_plot,
 )
+from common.predict import parse_room, predict_deltas
 
 # load environment variables from .env file
 load_dotenv()
@@ -1126,6 +1127,134 @@ class Stats(commands.Cog):
         embed.set_thumbnail(url=rank_data["url"])
 
         await interaction.followup.send(embed=embed, file=file)
+
+
+    @app_commands.command(
+        name="predict",
+        description="Predict MMR changes for each finish position from a room post",
+    )
+    @app_commands.describe(
+        text="Paste the room post (lines like '1. name (5831 MMR)' or "
+        "'1. a, b, c (5630 MMR)')",
+        seed="Your seed (defaults to the team containing your lounge name)",
+    )
+    async def predict(
+        self,
+        interaction: discord.Interaction,
+        text: str,
+        seed: int | None = None,
+    ):
+        await interaction.response.defer()
+
+        try:
+            teams = parse_room(text)
+        except ValueError as e:
+            await interaction.followup.send(str(e), ephemeral=True)
+            return
+
+        num_teams = len(teams)
+        players_per_team = len(teams[0]["names"])
+        num_players = num_teams * players_per_team
+
+        if num_players not in (12, 24):
+            await interaction.followup.send(
+                f"Only 12- or 24-player rooms are supported (parsed "
+                f"{num_players} players in {num_teams} teams).",
+                ephemeral=True,
+            )
+            return
+
+        if seed is None:
+            game_mode = "24p" if num_players == 24 else "12p"
+            season = os.getenv("CURRENT_SEASON")
+            player = await data_handler.fetch_player(
+                str(interaction.user.id), season, game_mode
+            )
+            if player is None or "name" not in player:
+                await interaction.followup.send(
+                    "Couldn't find your lounge profile from your Discord ID. "
+                    "Pass `seed` manually.",
+                    ephemeral=True,
+                )
+                return
+            target = player["name"].casefold()
+            matches = [
+                t["seed"]
+                for t in teams
+                if any(n.casefold() == target for n in t["names"])
+            ]
+            if not matches:
+                await interaction.followup.send(
+                    f"Couldn't find **{player['name']}** in the room. "
+                    "Pass `seed` manually.",
+                    ephemeral=True,
+                )
+                return
+            if len(matches) > 1:
+                await interaction.followup.send(
+                    f"Found **{player['name']}** in multiple teams "
+                    f"(seeds {matches}). Pass `seed` manually.",
+                    ephemeral=True,
+                )
+                return
+            seed = matches[0]
+
+        if not 1 <= seed <= num_teams:
+            await interaction.followup.send(
+                f"Seed must be between 1 and {num_teams}.", ephemeral=True
+            )
+            return
+
+        try:
+            deltas = predict_deltas(teams)[seed - 1]
+        except ValueError as e:
+            await interaction.followup.send(str(e), ephemeral=True)
+            return
+
+        team = teams[seed - 1]
+        if players_per_team == 1:
+            label = team["names"][0]
+        else:
+            label = f"Team {seed}: " + ", ".join(team["names"])
+
+        def ord_suffix(n: int) -> str:
+            if 10 <= n % 100 <= 20:
+                return "th"
+            return {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+
+        cells = [
+            f"{p}{ord_suffix(p)}: {deltas[p - 1]:+d}"
+            for p in range(1, num_teams + 1)
+        ]
+        cell_w = max(len(c) for c in cells)
+        # Cap at 2 columns so rows stay narrow enough for mobile Discord.
+        cols = 2 if num_teams >= 8 else 1
+        rows_per_col = (num_teams + cols - 1) // cols
+        lines: list[str] = []
+        for r in range(rows_per_col):
+            parts = []
+            for c in range(cols):
+                idx = c * rows_per_col + r
+                if idx < num_teams:
+                    parts.append(cells[idx].ljust(cell_w))
+            lines.append("   ".join(parts).rstrip())
+        block = "```\n" + "\n".join(lines) + "\n```"
+
+        embed = discord.Embed(
+            title=f"Predicted MMR Changes for {label}",
+            colour=0x1DA3DD,
+            timestamp=dt.datetime.now(dt.UTC),
+        )
+        embed.add_field(
+            name=f"Δ MMR by finish position (seed {seed}, {team['mmr']} MMR)",
+            value=block,
+            inline=False,
+        )
+        embed.set_footer(
+            text="These numbers are just an estimate — your actual MMR change will be different.",
+            icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
+        )
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot):
