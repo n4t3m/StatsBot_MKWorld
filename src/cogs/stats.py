@@ -10,8 +10,13 @@ from dotenv import load_dotenv
 import API.get_mkworld as api
 import common.constants as constants
 import common.data_handler as data_handler
-from common.plotting import create_plot, create_streak_plot, create_tiers_plot
 from common.calculation import calc_mmr_deltas
+from common.plotting import (
+    create_h2h_plot,
+    create_plot,
+    create_streak_plot,
+    create_tiers_plot,
+)
 
 # load environment variables from .env file
 load_dotenv()
@@ -407,12 +412,10 @@ class Stats(commands.Cog):
         else:
             embed.add_field(
                 name="Verified On",
-                value="Unverified — MMR changes shown are expected values and may differ from the final result.",
+                value="Unverified — MMR changes shown are expected values and may differ from the final result.",  # noqa: E501
                 inline=False,
             )
-        calced_deltas = (
-            None if is_verified else calc_mmr_deltas(table_details)
-        )
+        calced_deltas = None if is_verified else calc_mmr_deltas(table_details)
 
         mmr_message = "```\n"
         names = []
@@ -448,7 +451,9 @@ class Stats(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="namelog", description="View a player's name change history")
+    @app_commands.command(
+        name="namelog", description="View a player's name change history"
+    )
     @app_commands.describe(name="Player name, discord id, or mkc id (optional)")
     async def namelog(self, interaction: discord.Interaction, name: str | None = None):
         if name is None:
@@ -666,12 +671,12 @@ class Stats(commands.Cog):
         most_played = max(sorted_tiers, key=lambda kv: kv[1]["events"])
         embed.add_field(
             name="Best Tier",
-            value=f"{best_tier[0]} ({best_tier[1]['delta_sum'] / best_tier[1]['events']:+.0f} avg)",
+            value=f"{best_tier[0]} ({best_tier[1]['delta_sum'] / best_tier[1]['events']:+.0f} avg)",  # noqa: E501
             inline=True,
         )
         embed.add_field(
             name="Worst Tier",
-            value=f"{worst_tier[0]} ({worst_tier[1]['delta_sum'] / worst_tier[1]['events']:+.0f} avg)",
+            value=f"{worst_tier[0]} ({worst_tier[1]['delta_sum'] / worst_tier[1]['events']:+.0f} avg)",  # noqa: E501
             inline=True,
         )
         embed.add_field(
@@ -686,6 +691,195 @@ class Stats(commands.Cog):
         )
         embed.set_thumbnail(url=rank_data["url"])
 
+        await interaction.followup.send(embed=embed, file=file)
+
+    @app_commands.command(
+        name="h2h",
+        description="Compare two players' shared matches (head-to-head)",
+    )
+    @app_commands.describe(
+        name1="First player (lounge name, discord id, or mkc id)",
+        name2="Second player (defaults to you)",
+        season="Season number (default: current season)",
+        game_mode="Game mode (default: 24p)",
+    )
+    @app_commands.choices(
+        game_mode=[
+            app_commands.Choice(name="24p", value="24p"),
+            app_commands.Choice(name="12p", value="12p"),
+        ]
+    )
+    async def h2h(
+        self,
+        interaction: discord.Interaction,
+        name1: str,
+        name2: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = "24p",
+    ):
+        await interaction.response.defer()
+
+        if name2 is None:
+            # caller is the implicit second player; put them on the left
+            name2 = name1
+            name1 = str(interaction.user.id)
+
+        p1 = await data_handler.fetch_player_info(name1, season, game_mode)
+        if p1 is None:
+            await interaction.followup.send(
+                f"Player '{name1}' not found.", ephemeral=True
+            )
+            return
+        p2 = await data_handler.fetch_player_info(name2, season, game_mode)
+        if p2 is None:
+            await interaction.followup.send(
+                f"Player '{name2}' not found.", ephemeral=True
+            )
+            return
+
+        if p1.get("playerId") == p2.get("playerId"):
+            await interaction.followup.send(
+                "You can't compare a player to themselves.", ephemeral=True
+            )
+            return
+
+        c1 = {
+            e["changeId"]: e
+            for e in p1.get("mmrChanges", [])
+            if e.get("reason") == "Table" and "changeId" in e
+        }
+        c2 = {
+            e["changeId"]: e
+            for e in p2.get("mmrChanges", [])
+            if e.get("reason") == "Table" and "changeId" in e
+        }
+        shared_ids = sorted(
+            set(c1) & set(c2), key=lambda k: c1[k]["time"], reverse=True
+        )
+
+        if not shared_ids:
+            await interaction.followup.send(
+                f"No shared {game_mode} matches found between "
+                f"{p1['name']} and {p2['name']}.",
+                ephemeral=True,
+            )
+            return
+
+        pid1, pid2 = p1["playerId"], p2["playerId"]
+        opponent_ids = []
+        for cid in shared_ids:
+            partners1 = c1[cid].get("partnerIds") or []
+            partners2 = c2[cid].get("partnerIds") or []
+            if pid2 not in partners1 and pid1 not in partners2:
+                opponent_ids.append(cid)
+
+        if not opponent_ids:
+            await interaction.followup.send(
+                f"{p1['name']} and {p2['name']} have only played {game_mode} "
+                "matches as teammates — no head-to-head matches to compare.",
+                ephemeral=True,
+            )
+            return
+
+        p1_beats_p2 = sum(
+            1 for cid in opponent_ids if c1[cid]["rank"] < c2[cid]["rank"]
+        )
+        p2_beats_p1 = sum(
+            1 for cid in opponent_ids if c2[cid]["rank"] < c1[cid]["rank"]
+        )
+        ties = len(opponent_ids) - p1_beats_p2 - p2_beats_p1
+
+        n = len(opponent_ids)
+        scores1 = [c1[cid].get("score", 0) for cid in opponent_ids]
+        scores2 = [c2[cid].get("score", 0) for cid in opponent_ids]
+        ranks1 = [c1[cid].get("rank", 0) for cid in opponent_ids]
+        ranks2 = [c2[cid].get("rank", 0) for cid in opponent_ids]
+        p1_avg = sum(scores1) / n
+        p2_avg = sum(scores2) / n
+        p1_avg_rank = sum(ranks1) / n
+        p2_avg_rank = sum(ranks2) / n
+        p1_outscored = sum(1 for a, b in zip(scores1, scores2) if a > b)
+        p2_outscored = sum(1 for a, b in zip(scores1, scores2) if b > a)
+
+        p1_total_delta = sum(c1[cid].get("mmrDelta", 0) for cid in opponent_ids)
+        p2_total_delta = sum(c2[cid].get("mmrDelta", 0) for cid in opponent_ids)
+
+        def _biggest_win(my, other):
+            best_cid = None
+            best_margin = 0
+            for cid in opponent_ids:
+                margin = my[cid].get("score", 0) - other[cid].get("score", 0)
+                if margin > best_margin:
+                    best_margin = margin
+                    best_cid = cid
+            if best_cid is None:
+                return None
+            return {
+                "date": my[best_cid]["time"][:10],
+                "tier": my[best_cid].get("tier", "?"),
+                "table_id": best_cid,
+                "my_score": my[best_cid].get("score", 0),
+                "other_score": other[best_cid].get("score", 0),
+                "diff": best_margin,
+            }
+
+        p1_biggest_win = _biggest_win(c1, c2)
+        p2_biggest_win = _biggest_win(c2, c1)
+
+        recent = []
+        for cid in opponent_ids[:10]:
+            r1, r2 = c1[cid], c2[cid]
+            recent.append(
+                {
+                    "date": r1["time"][:10],
+                    "tier": r1.get("tier", "?"),
+                    "p1_score": r1.get("score", 0),
+                    "p1_delta": r1.get("mmrDelta", 0),
+                    "p2_score": r2.get("score", 0),
+                    "p2_delta": r2.get("mmrDelta", 0),
+                    "p1_rank": r1.get("rank", "?"),
+                    "p2_rank": r2.get("rank", "?"),
+                }
+            )
+
+        stats = {
+            "p1_name": p1["name"],
+            "p2_name": p2["name"],
+            "p1_country": p1.get("countryCode", ""),
+            "p2_country": p2.get("countryCode", ""),
+            "p1_mmr": p1.get("mmr"),
+            "p2_mmr": p2.get("mmr"),
+            "shared": n,
+            "p1_beats_p2": p1_beats_p2,
+            "p2_beats_p1": p2_beats_p1,
+            "ties": ties,
+            "p1_avg_score": p1_avg,
+            "p2_avg_score": p2_avg,
+            "p1_avg_rank": p1_avg_rank,
+            "p2_avg_rank": p2_avg_rank,
+            "p1_outscored": p1_outscored,
+            "p2_outscored": p2_outscored,
+            "p1_mmr_delta": p1_total_delta,
+            "p2_mmr_delta": p2_total_delta,
+            "p1_biggest_win": p1_biggest_win,
+            "p2_biggest_win": p2_biggest_win,
+            "recent": recent,
+        }
+
+        plot_image = create_h2h_plot(stats=stats, season=season, game_mode=game_mode)
+        file = discord.File(plot_image, filename="h2h.png")
+
+        embed = discord.Embed(
+            title=f"S{season} Head-to-Head - MKWorld{game_mode.upper()}",
+            description=f"### {p1['name']} vs {p2['name']}",
+            colour=0x1DA3DD,
+            timestamp=dt.datetime.now(dt.UTC),
+        )
+        embed.set_image(url="attachment://h2h.png")
+        embed.set_footer(
+            text="MKCentral Lounge",
+            icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
+        )
         await interaction.followup.send(embed=embed, file=file)
 
     @app_commands.command(name="calc", description="Calculate Expected MMR changes")
@@ -841,14 +1035,10 @@ class Stats(commands.Cog):
         # The current run is part of the season, so longest_*['count'] already
         # includes it. Equality means the active run *is* the season longest.
         win_active = (
-            cur_count > 0
-            and latest_sign == 1
-            and cur_count >= longest_win["count"]
+            cur_count > 0 and latest_sign == 1 and cur_count >= longest_win["count"]
         )
         loss_active = (
-            cur_count > 0
-            and latest_sign == -1
-            and cur_count >= longest_loss["count"]
+            cur_count > 0 and latest_sign == -1 and cur_count >= longest_loss["count"]
         )
 
         def fmt_date_range(
@@ -884,7 +1074,7 @@ class Stats(commands.Cog):
         )
 
         loss_value = (
-            f"```\n{longest_loss['count']} matches ({longest_loss['delta']:+d} MMR)\n```"
+            f"```\n{longest_loss['count']} matches ({longest_loss['delta']:+d} MMR)\n```"  # noqa: E501
             if longest_loss["count"] > 0
             else "```\nNone\n```"
         )
