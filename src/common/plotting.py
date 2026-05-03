@@ -490,90 +490,156 @@ def create_h2h_plot(
         ax.set_axis_off()
         flag = f" [{country}]" if country else ""
         ax.text(
-            0.5, 0.93, f"{name}{flag}",
-            transform=ax.transAxes, ha="center", va="center",
-            color="white", fontsize=14, fontweight="bold",
+            0.5,
+            0.93,
+            f"{name}{flag}",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="white",
+            fontsize=14,
+            fontweight="bold",
         )
         if mmr is not None:
             ax.text(
-                0.5, 0.83, f"{mmr:,} mmr",
-                transform=ax.transAxes, ha="center", va="center",
-                color="#9CCBD6", fontsize=9,
+                0.5,
+                0.83,
+                f"{mmr:,} mmr",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                color="#9CCBD6",
+                fontsize=9,
             )
         # Stat 1: avg score
         ax.text(
-            0.5, 0.62, f"{avg_score:.2f}",
-            transform=ax.transAxes, ha="center", va="center",
-            color="white", fontsize=20, fontweight="bold",
+            0.5,
+            0.62,
+            f"{avg_score:.2f}",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="white",
+            fontsize=20,
+            fontweight="bold",
         )
         ax.text(
-            0.5, 0.52, "avg score",
-            transform=ax.transAxes, ha="center", va="center",
-            color="#9CCBD6", fontsize=9,
+            0.5,
+            0.52,
+            "avg score",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="#9CCBD6",
+            fontsize=9,
         )
         # Stat 2: avg placement
         ax.text(
-            0.5, 0.36, f"{avg_rank:.2f}",
-            transform=ax.transAxes, ha="center", va="center",
-            color="white", fontsize=20, fontweight="bold",
+            0.5,
+            0.36,
+            f"{avg_rank:.2f}",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="white",
+            fontsize=20,
+            fontweight="bold",
         )
         ax.text(
-            0.5, 0.26, "avg placement",
-            transform=ax.transAxes, ha="center", va="center",
-            color="#9CCBD6", fontsize=9,
+            0.5,
+            0.26,
+            "avg placement",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="#9CCBD6",
+            fontsize=9,
         )
         # Stat 3: mmr delta
         delta_color = (
-            "#7CFF9E" if mmr_delta > 0
-            else ("#FF7C8A" if mmr_delta < 0 else "white")
+            "#7CFF9E" if mmr_delta > 0 else ("#FF7C8A" if mmr_delta < 0 else "white")
         )
         ax.text(
-            0.5, 0.10, f"{mmr_delta:+,d}",
-            transform=ax.transAxes, ha="center", va="center",
-            color=delta_color, fontsize=20, fontweight="bold",
+            0.5,
+            0.10,
+            f"{mmr_delta:+,d}",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color=delta_color,
+            fontsize=20,
+            fontweight="bold",
         )
         ax.text(
-            0.5, 0.00, "mmr delta",
-            transform=ax.transAxes, ha="center", va="center",
-            color="#9CCBD6", fontsize=9,
+            0.5,
+            0.00,
+            "mmr delta",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="#9CCBD6",
+            fontsize=9,
         )
 
     ax_p1 = fig.add_subplot(gs_body[0])
     _draw_player_column(
-        ax_p1, p1, stats.get("p1_country", ""), stats.get("p1_mmr"),
-        stats["p1_avg_score"], stats["p1_avg_rank"], stats["p1_mmr_delta"],
+        ax_p1,
+        p1,
+        stats.get("p1_country", ""),
+        stats.get("p1_mmr"),
+        stats["p1_avg_score"],
+        stats["p1_avg_rank"],
+        stats["p1_mmr_delta"],
     )
 
     ax_center = fig.add_subplot(gs_body[1])
     ax_center.set_axis_off()
-    h2h_str = (
-        f"{stats['p1_beats_p2']}-{stats['ties']}-{stats['p2_beats_p1']}"
+    h2h_str = f"{stats['p1_beats_p2']}-{stats['ties']}-{stats['p2_beats_p1']}"
+    ax_center.text(
+        0.5,
+        0.62,
+        h2h_str,
+        transform=ax_center.transAxes,
+        ha="center",
+        va="center",
+        color="white",
+        fontsize=28,
+        fontweight="bold",
     )
     ax_center.text(
-        0.5, 0.62, h2h_str,
-        transform=ax_center.transAxes, ha="center", va="center",
-        color="white", fontsize=28, fontweight="bold",
-    )
-    ax_center.text(
-        0.5, 0.48, "head-to-head record",
-        transform=ax_center.transAxes, ha="center", va="center",
-        color="white", fontsize=11,
+        0.5,
+        0.48,
+        "head-to-head record",
+        transform=ax_center.transAxes,
+        ha="center",
+        va="center",
+        color="white",
+        fontsize=11,
     )
     sub_caption = (
         f"S{season} · {game_mode_display} · "
-        f"{stats['shared']} opponent match"
-        + ("es" if stats["shared"] != 1 else "")
+        f"{stats['shared']} opponent match" + ("es" if stats["shared"] != 1 else "")
     )
     ax_center.text(
-        0.5, 0.36, sub_caption,
-        transform=ax_center.transAxes, ha="center", va="center",
-        color="#9CCBD6", fontsize=8,
+        0.5,
+        0.36,
+        sub_caption,
+        transform=ax_center.transAxes,
+        ha="center",
+        va="center",
+        color="#9CCBD6",
+        fontsize=8,
     )
 
     ax_p2 = fig.add_subplot(gs_body[2])
     _draw_player_column(
-        ax_p2, p2, stats.get("p2_country", ""), stats.get("p2_mmr"),
-        stats["p2_avg_score"], stats["p2_avg_rank"], stats["p2_mmr_delta"],
+        ax_p2,
+        p2,
+        stats.get("p2_country", ""),
+        stats.get("p2_mmr"),
+        stats["p2_avg_score"],
+        stats["p2_avg_rank"],
+        stats["p2_mmr_delta"],
     )
 
     # --- Highlight cards: biggest win per player ---
@@ -586,7 +652,9 @@ def create_h2h_plot(
         ax.set_axis_off()
         ax.add_patch(
             matplotlib.patches.FancyBboxPatch(
-                (0.01, 0.05), 0.98, 0.9,
+                (0.01, 0.05),
+                0.98,
+                0.9,
                 boxstyle="round,pad=0.01,rounding_size=0.02",
                 linewidth=0.8,
                 edgecolor="#3a5a8a",
@@ -595,18 +663,29 @@ def create_h2h_plot(
             )
         )
         ax.text(
-            0.04, 0.78, f"{owner}'s biggest score differential",
-            transform=ax.transAxes, ha="left", va="center",
-            color="white", fontsize=11, fontweight="bold",
+            0.04,
+            0.78,
+            f"{owner}'s largest score differential",
+            transform=ax.transAxes,
+            ha="left",
+            va="center",
+            color="white",
+            fontsize=11,
+            fontweight="bold",
         )
         if win:
             meta_parts = [win["date"], f"tier {win['tier']}"]
             if win.get("table_id") is not None:
                 meta_parts.append(f"table {win['table_id']}")
             ax.text(
-                0.04, 0.50, " · ".join(meta_parts),
-                transform=ax.transAxes, ha="left", va="center",
-                color="#9CCBD6", fontsize=9,
+                0.04,
+                0.50,
+                " · ".join(meta_parts),
+                transform=ax.transAxes,
+                ha="left",
+                va="center",
+                color="#9CCBD6",
+                fontsize=9,
             )
             line = (
                 f"{_short(owner)} scored {win['my_score']} vs "
@@ -614,15 +693,25 @@ def create_h2h_plot(
                 f"(+{win['diff']} diff)"
             )
             ax.text(
-                0.04, 0.22, line,
-                transform=ax.transAxes, ha="left", va="center",
-                color="white", fontsize=9,
+                0.04,
+                0.22,
+                line,
+                transform=ax.transAxes,
+                ha="left",
+                va="center",
+                color="white",
+                fontsize=9,
             )
         else:
             ax.text(
-                0.04, 0.40, "No matches where this player outscored the other.",
-                transform=ax.transAxes, ha="left", va="center",
-                color="#9CCBD6", fontsize=9,
+                0.04,
+                0.40,
+                "No matches where this player outscored the other.",
+                transform=ax.transAxes,
+                ha="left",
+                va="center",
+                color="#9CCBD6",
+                fontsize=9,
             )
 
     ax_h1 = fig.add_subplot(gs_high[0])
