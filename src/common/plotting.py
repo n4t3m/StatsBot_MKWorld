@@ -9,6 +9,7 @@ import matplotlib.image as mpimg
 import matplotlib.patches as mpatches
 import numpy as np
 from matplotlib.figure import Figure
+from matplotlib.ticker import MaxNLocator
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 from common.constants import get_mmr_definition, get_rank, rank_index
@@ -205,6 +206,193 @@ def create_plot(mmrhistory: list, season: int, player_name: str, game_mode: str)
             linewidth=0.5,
         ),
     )
+
+    fig.savefig(b, format="png", bbox_inches="tight", dpi=150)
+    b.seek(0)
+    fig.clf()
+
+    return b
+
+
+def create_scores_plot(
+    scores: list,
+    average: float,
+    season: int,
+    player_name: str,
+    country_code: str,
+    game_mode: str,
+    tier: str | None,
+    label: str,
+    partner_scores: list | None = None,
+    partner_average: float | None = None,
+):
+    b = BytesIO()
+
+    matplotlib.rcParams.update(
+        matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
+    )
+
+    if game_mode == "12p":
+        game_mode_display = "12 player"
+    elif game_mode == "24p":
+        game_mode_display = "24 player"
+    else:
+        game_mode_display = game_mode
+
+    fig = Figure(figsize=(10, 6.5))
+    gs = gridspec.GridSpec(
+        3, 1, height_ratios=[0.10, 0.06, 1.0], hspace=0.0, figure=fig
+    )
+
+    # --- Header ---
+    ax_header = fig.add_subplot(gs[0])
+    ax_header.set_axis_off()
+    try:
+        favicon = mpimg.imread("src/common/favicon.ico")
+        ax_inset = inset_axes(
+            ax_header,
+            width="4%",
+            height="80%",
+            loc="center left",
+            borderpad=0.5,
+        )
+        ax_inset.imshow(favicon)
+        ax_inset.set_axis_off()
+    except Exception:
+        pass
+    ax_header.text(
+        0.08,
+        0.5,
+        "MKCentral MKWorld Lounge",
+        transform=ax_header.transAxes,
+        fontsize=13,
+        fontweight="bold",
+        color="white",
+        verticalalignment="center",
+    )
+    ax_header.axhline(y=0, color="white", linewidth=0.5, alpha=0.3)
+
+    # --- Title ---
+    ax_title = fig.add_subplot(gs[1])
+    ax_title.set_axis_off()
+    flag = f" [{country_code}]" if country_code else ""
+    tier_part = f" | Tier: {tier}" if tier else ""
+    title_text = (
+        f"Season {season} ({game_mode_display}) Scores{tier_part} | {label}"
+        f" : {player_name}{flag}"
+    )
+    ax_title.text(
+        0.5,
+        0.5,
+        title_text,
+        transform=ax_title.transAxes,
+        fontsize=11,
+        color="white",
+        horizontalalignment="center",
+        verticalalignment="center",
+    )
+
+    # --- Main chart ---
+    ax = fig.add_subplot(gs[2])
+    xs = np.arange(1, len(scores) + 1)
+
+    ax.plot(
+        xs,
+        scores,
+        color="white",
+        linewidth=4.0,
+        alpha=0.18,
+        solid_capstyle="round",
+    )
+    ax.plot(
+        xs,
+        scores,
+        color="snow",
+        linewidth=1.4,
+        marker="o",
+        markersize=4,
+        markerfacecolor="#5BC0EB",
+        markeredgecolor="white",
+        markeredgewidth=0.6,
+        solid_capstyle="round",
+        label="Scores",
+    )
+
+    ax.axhline(
+        y=average,
+        color="#5BC0EB",
+        linewidth=1.2,
+        alpha=0.85,
+        label="Average Score",
+    )
+
+    if partner_scores is not None:
+        partner_xs = []
+        partner_ys = []
+        for x, partners in zip(xs, partner_scores):
+            for p in partners:
+                partner_xs.append(x)
+                partner_ys.append(p)
+            if len(partners) >= 2:
+                ax.plot(
+                    [x, x],
+                    [min(partners), max(partners)],
+                    linestyle=":",
+                    color="#E67E22",
+                    linewidth=1.2,
+                    alpha=0.9,
+                    zorder=2,
+                )
+        if partner_xs:
+            ax.scatter(
+                partner_xs,
+                partner_ys,
+                s=24,
+                color="#E67E22",
+                edgecolors="white",
+                linewidths=0.4,
+                alpha=0.9,
+                label="Partner Scores",
+                zorder=3,
+            )
+        if partner_average is not None:
+            ax.axhline(
+                y=partner_average,
+                color="#E67E22",
+                linewidth=1.2,
+                alpha=0.85,
+                label="Partner Average Score",
+            )
+
+    ax.set_ylabel("Score")
+    ax.set_xlabel("Match")
+    ax.grid(
+        True,
+        "both",
+        "both",
+        color="snow",
+        linestyle=":",
+        alpha=0.25,
+        linewidth=0.5,
+    )
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.tick_params(axis="both", labelsize=8)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True, min_n_ticks=1))
+    if len(scores) <= 12:
+        ax.set_xticks(list(xs))
+    ax.set_xlim(xs[0] - 0.5, xs[-1] + 0.5)
+    ax.fill_between(xs, ax.get_ylim()[0], scores, facecolor="#212121", alpha=0.4)
+
+    legend = ax.legend(
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1.0),
+        borderaxespad=0.0,
+        fontsize=8,
+        framealpha=0.6,
+    )
+    for text in legend.get_texts():
+        text.set_color("white")
 
     fig.savefig(b, format="png", bbox_inches="tight", dpi=150)
     b.seek(0)

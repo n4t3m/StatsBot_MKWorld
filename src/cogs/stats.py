@@ -1,5 +1,6 @@
 import datetime as dt
 import os
+import statistics
 from datetime import datetime
 
 import discord
@@ -14,9 +15,27 @@ from common.calculation import calc_mmr_deltas
 from common.plotting import (
     create_h2h_plot,
     create_plot,
+    create_scores_plot,
     create_streak_plot,
     create_tiers_plot,
 )
+
+TIER_ORDER = [
+    "SQ",
+    "X",
+    "S",
+    "AB",
+    "A",
+    "B",
+    "BC",
+    "C",
+    "CD",
+    "D",
+    "DE",
+    "E",
+    "EF",
+    "F",
+]
 
 # load environment variables from .env file
 load_dotenv()
@@ -562,22 +581,7 @@ class Stats(commands.Cog):
             )
             return
 
-        tier_order = [
-            "SQ",
-            "X",
-            "S",
-            "AB",
-            "A",
-            "B",
-            "BC",
-            "C",
-            "CD",
-            "D",
-            "DE",
-            "E",
-            "EF",
-            "F",
-        ]
+        tier_order = TIER_ORDER
 
         buckets = {}
         for e in table_events:
@@ -880,6 +884,137 @@ class Stats(commands.Cog):
             text="MKCentral Lounge",
             icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
         )
+        await interaction.followup.send(embed=embed, file=file)
+
+    @app_commands.command(
+        name="scores", description="Show MKWorld Player Score Breakdown"
+    )
+    @app_commands.describe(
+        name="Lounge name, discord id, mkc id (optional)",
+        season="Season number (default: current season)",
+        game_mode="Game mode (default: 24p)",
+        tier="Filter by tier (default: all tiers)",
+        last="Limit to the last N matches (default: all matches)",
+        show_partner_scores="Overlay partner scores on the plot (default: No)",
+    )
+    @app_commands.choices(
+        game_mode=[
+            app_commands.Choice(name="24p", value="24p"),
+            app_commands.Choice(name="12p", value="12p"),
+        ],
+        tier=[app_commands.Choice(name=t, value=t) for t in TIER_ORDER],
+        show_partner_scores=[
+            app_commands.Choice(name="Yes", value="yes"),
+            app_commands.Choice(name="No", value="no"),
+        ],
+    )
+    async def scores(
+        self,
+        interaction: discord.Interaction,
+        name: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = "24p",
+        tier: str | None = None,
+        last: int | None = None,
+        show_partner_scores: str | None = "no",
+    ):
+        await interaction.response.defer()
+
+        if name is None:
+            name = str(interaction.user.id)
+        player = await data_handler.fetch_player_info(name, season, game_mode)
+
+        if player is None:
+            await interaction.followup.send(
+                f"Player '{name}' not found.", ephemeral=True
+            )
+            return
+
+        table_events = [
+            e for e in player.get("mmrChanges", []) if e.get("reason") == "Table"
+        ]
+        # API returns most recent first; reverse so x-axis is oldest -> newest
+        table_events.reverse()
+
+        if tier is not None:
+            table_events = [e for e in table_events if e.get("tier") == tier]
+
+        if last is not None and last > 0:
+            table_events = table_events[-last:]
+
+        scores_list = [e.get("score", 0) for e in table_events]
+
+        if len(scores_list) < 2:
+            tier_msg = f" in tier {tier}" if tier else ""
+            await interaction.followup.send(
+                f"Not enough {game_mode} matches{tier_msg} to build a score breakdown.",
+                ephemeral=True,
+            )
+            return
+
+        avg_score = statistics.mean(scores_list)
+        median_score = statistics.median(scores_list)
+        top_score = max(scores_list)
+        std_dev = statistics.stdev(scores_list)
+
+        if last is not None and last > 0:
+            label = f"Last {len(scores_list)} Matches"
+        else:
+            label = f"In the Last {len(scores_list)} Matches"
+
+        show_partners = show_partner_scores == "yes"
+        partner_scores_per_match = None
+        partner_avg = None
+        if show_partners:
+            partner_scores_per_match = [
+                e.get("partnerScores", []) or [] for e in table_events
+            ]
+            flat_partner_scores = [
+                p for partners in partner_scores_per_match for p in partners
+            ]
+            partner_avg = (
+                statistics.mean(flat_partner_scores) if flat_partner_scores else None
+            )
+
+        plot_image = create_scores_plot(
+            scores=scores_list,
+            average=avg_score,
+            season=season,
+            player_name=player["name"],
+            country_code=player.get("countryCode", ""),
+            game_mode=game_mode,
+            tier=tier,
+            label=label,
+            partner_scores=partner_scores_per_match,
+            partner_average=partner_avg,
+        )
+        file = discord.File(plot_image, filename="scores.png")
+
+        rank_data = constants.get_rank_data(season)[player["rank"]]
+        title_tier = f" | Tier: {tier}" if tier else ""
+        embed = discord.Embed(
+            title=f"S{season} Scores{title_tier} | {label}",
+            url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}?p={game_mode[0:1]}",
+            description=f"### {player['name']} [{player['countryCode']}]",
+            colour=int(f"0x{rank_data['color'][1:]}", 16),
+            timestamp=dt.datetime.now(dt.UTC),
+        )
+
+        embed.add_field(name="Average Score", value=f"{avg_score:.1f}", inline=True)
+        embed.add_field(name="Top Score", value=f"{top_score}", inline=True)
+        embed.add_field(name="​", value="​", inline=True)
+
+        embed.add_field(name="Median Score", value=f"{median_score:g}", inline=True)
+        embed.add_field(name="Standard Deviation", value=f"{std_dev:.1f}", inline=True)
+        embed.add_field(name="​", value="​", inline=True)
+
+        embed.set_image(url="attachment://scores.png")
+        embed.set_footer(
+            text="MKCentral Lounge",
+            icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
+        )
+        embed.set_thumbnail(url=rank_data["url"])
+
         await interaction.followup.send(embed=embed, file=file)
 
     @app_commands.command(name="calc", description="Calculate Expected MMR changes")
