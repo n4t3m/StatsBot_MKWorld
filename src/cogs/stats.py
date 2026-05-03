@@ -10,8 +10,13 @@ from dotenv import load_dotenv
 import API.get_mkworld as api
 import common.constants as constants
 import common.data_handler as data_handler
-from common.plotting import create_h2h_plot, create_plot, create_tiers_plot
 from common.calculation import calc_mmr_deltas
+from common.plotting import (
+    create_h2h_plot,
+    create_plot,
+    create_streak_plot,
+    create_tiers_plot,
+)
 
 # load environment variables from .env file
 load_dotenv()
@@ -407,12 +412,10 @@ class Stats(commands.Cog):
         else:
             embed.add_field(
                 name="Verified On",
-                value="Unverified — MMR changes shown are expected values and may differ from the final result.",
+                value="Unverified — MMR changes shown are expected values and may differ from the final result.",  # noqa: E501
                 inline=False,
             )
-        calced_deltas = (
-            None if is_verified else calc_mmr_deltas(table_details)
-        )
+        calced_deltas = None if is_verified else calc_mmr_deltas(table_details)
 
         mmr_message = "```\n"
         names = []
@@ -448,7 +451,9 @@ class Stats(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="namelog", description="View a player's name change history")
+    @app_commands.command(
+        name="namelog", description="View a player's name change history"
+    )
     @app_commands.describe(name="Player name, discord id, or mkc id (optional)")
     async def namelog(self, interaction: discord.Interaction, name: str | None = None):
         if name is None:
@@ -666,12 +671,12 @@ class Stats(commands.Cog):
         most_played = max(sorted_tiers, key=lambda kv: kv[1]["events"])
         embed.add_field(
             name="Best Tier",
-            value=f"{best_tier[0]} ({best_tier[1]['delta_sum'] / best_tier[1]['events']:+.0f} avg)",
+            value=f"{best_tier[0]} ({best_tier[1]['delta_sum'] / best_tier[1]['events']:+.0f} avg)",  # noqa: E501
             inline=True,
         )
         embed.add_field(
             name="Worst Tier",
-            value=f"{worst_tier[0]} ({worst_tier[1]['delta_sum'] / worst_tier[1]['events']:+.0f} avg)",
+            value=f"{worst_tier[0]} ({worst_tier[1]['delta_sum'] / worst_tier[1]['events']:+.0f} avg)",  # noqa: E501
             inline=True,
         )
         embed.add_field(
@@ -861,9 +866,7 @@ class Stats(commands.Cog):
             "recent": recent,
         }
 
-        plot_image = create_h2h_plot(
-            stats=stats, season=season, game_mode=game_mode
-        )
+        plot_image = create_h2h_plot(stats=stats, season=season, game_mode=game_mode)
         file = discord.File(plot_image, filename="h2h.png")
 
         embed = discord.Embed(
@@ -929,6 +932,200 @@ class Stats(commands.Cog):
             icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
         )
         await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(
+        name="streak", description="Show MKWorld Player Win/Loss Streaks"
+    )
+    @app_commands.describe(
+        name="Lounge name, discord id, mkc id (optional)",
+        season="Season number (default: current season)",
+        game_mode="Game mode (default: 24p)",
+    )
+    @app_commands.choices(
+        game_mode=[
+            app_commands.Choice(name="24p", value="24p"),
+            app_commands.Choice(name="12p", value="12p"),
+        ]
+    )
+    async def streak(
+        self,
+        interaction: discord.Interaction,
+        name: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = "24p",
+    ):
+        await interaction.response.defer()
+
+        if name is None:
+            name = str(interaction.user.id)
+        player = await data_handler.fetch_player_info(name, season, game_mode)
+
+        if player is None:
+            await interaction.followup.send(
+                f"Player '{name}' not found.", ephemeral=True
+            )
+            return
+
+        table_events = [
+            e for e in player.get("mmrChanges", []) if e.get("reason") == "Table"
+        ]
+        if not table_events:
+            await interaction.followup.send(
+                f"{player['name']} has no {game_mode} matches in S{season}.",
+                ephemeral=True,
+            )
+            return
+
+        # API returns newest-first; we want oldest-first for streak walks
+        chronological = sorted(table_events, key=lambda e: e["time"])
+
+        def sign(d: int) -> int:
+            return 1 if d > 0 else (-1 if d < 0 else 0)
+
+        # Current streak: walk newest -> oldest while the sign holds
+        latest_sign = sign(chronological[-1].get("mmrDelta", 0))
+        cur_count = 0
+        cur_delta = 0
+        if latest_sign != 0:
+            for e in reversed(chronological):
+                if sign(e.get("mmrDelta", 0)) != latest_sign:
+                    break
+                cur_count += 1
+                cur_delta += e.get("mmrDelta", 0)
+
+        # Longest run for a given sign across the whole season
+        def longest_run(target: int) -> dict:
+            best = {"count": 0, "delta": 0, "start": None, "end": None}
+            run_count = 0
+            run_delta = 0
+            run_start = None
+            run_end = None
+            for e in chronological:
+                d = e.get("mmrDelta", 0)
+                if sign(d) == target:
+                    if run_count == 0:
+                        run_start = e.get("time")
+                    run_count += 1
+                    run_delta += d
+                    run_end = e.get("time")
+                else:
+                    if run_count > best["count"]:
+                        best = {
+                            "count": run_count,
+                            "delta": run_delta,
+                            "start": run_start,
+                            "end": run_end,
+                        }
+                    run_count = 0
+                    run_delta = 0
+                    run_start = None
+                    run_end = None
+            if run_count > best["count"]:
+                best = {
+                    "count": run_count,
+                    "delta": run_delta,
+                    "start": run_start,
+                    "end": run_end,
+                }
+            return best
+
+        longest_win = longest_run(1)
+        longest_loss = longest_run(-1)
+
+        # The current run is part of the season, so longest_*['count'] already
+        # includes it. Equality means the active run *is* the season longest.
+        win_active = (
+            cur_count > 0 and latest_sign == 1 and cur_count >= longest_win["count"]
+        )
+        loss_active = (
+            cur_count > 0 and latest_sign == -1 and cur_count >= longest_loss["count"]
+        )
+
+        def fmt_date_range(
+            start: str | None, end: str | None, active: bool = False
+        ) -> str:
+            if start is None:
+                return ""
+            s = int(datetime.fromisoformat(start).timestamp())
+            if active:
+                return f"<t:{s}:d> – active"
+            if end is None:
+                return ""
+            e = int(datetime.fromisoformat(end).timestamp())
+            if s == e:
+                return f"<t:{s}:d>"
+            return f"<t:{s}:d> – <t:{e}:d>"
+
+        if cur_count == 0:
+            cur_label = "No active streak"
+            cur_value = "Last match was a tie."
+        else:
+            kind = "Win" if latest_sign == 1 else "Loss"
+            cur_label = f"Current {kind} Streak"
+            cur_value = f"```\n{cur_count} matches ({cur_delta:+d} MMR)\n```"
+
+        win_value = (
+            f"```\n{longest_win['count']} matches ({longest_win['delta']:+d} MMR)\n```"
+            if longest_win["count"] > 0
+            else "```\nNone\n```"
+        )
+        win_range = fmt_date_range(
+            longest_win["start"], longest_win["end"], active=win_active
+        )
+
+        loss_value = (
+            f"```\n{longest_loss['count']} matches ({longest_loss['delta']:+d} MMR)\n```"  # noqa: E501
+            if longest_loss["count"] > 0
+            else "```\nNone\n```"
+        )
+        loss_range = fmt_date_range(
+            longest_loss["start"], longest_loss["end"], active=loss_active
+        )
+
+        # Last-N strip: newest on the right, oldest on the left
+        last_n = chronological[-10:]
+        # Cells in the visual strip that belong to the active streak
+        strip_streak_count = min(cur_count, len(last_n))
+
+        plot_image = create_streak_plot(
+            events=last_n,
+            current_streak_count=strip_streak_count,
+            season=season,
+            player_name=player["name"],
+            country_code=player.get("countryCode", ""),
+            game_mode=game_mode,
+            mmr=player.get("mmr"),
+        )
+        file = discord.File(plot_image, filename="streak.png")
+
+        rank_data = constants.get_rank_data(season)[player["rank"]]
+        mmr_suffix = f" · {player['mmr']} MMR" if player.get("mmr") is not None else ""
+        embed = discord.Embed(
+            title=f"S{season} Streaks - MKWorld{game_mode.upper()}",
+            url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}?p={game_mode[0:1]}",
+            description=f"### {player['name']}{mmr_suffix} [{player['countryCode']}]",
+            colour=int(f"0x{rank_data['color'][1:]}", 16),
+            timestamp=dt.datetime.now(dt.UTC),
+        )
+        embed.set_image(url="attachment://streak.png")
+        embed.add_field(name=cur_label, value=cur_value, inline=False)
+        embed.add_field(
+            name="Longest Win Streak",
+            value=win_value + (win_range if win_range else ""),
+            inline=True,
+        )
+        embed.add_field(
+            name="Longest Loss Streak",
+            value=loss_value + (loss_range if loss_range else ""),
+            inline=True,
+        )
+        embed.set_footer(
+            text="MKCentral Lounge",
+            icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
+        )
+        embed.set_thumbnail(url=rank_data["url"])
+
+        await interaction.followup.send(embed=embed, file=file)
 
 
 async def setup(bot):

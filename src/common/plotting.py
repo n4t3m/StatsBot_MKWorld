@@ -6,7 +6,7 @@ from io import BytesIO
 
 import matplotlib.gridspec as gridspec
 import matplotlib.image as mpimg
-import matplotlib.patches
+import matplotlib.patches as mpatches
 import numpy as np
 from matplotlib.figure import Figure
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
@@ -378,6 +378,175 @@ def create_tiers_plot(
     return b
 
 
+def create_streak_plot(
+    events: list,
+    current_streak_count: int,
+    season: int,
+    player_name: str,
+    country_code: str,
+    game_mode: str,
+    target_cells: int = 10,
+    mmr: int | None = None,
+):
+    """Render last-N matches as a colored W/L/T strip.
+
+    events: chronological list (oldest -> newest) of mmrChanges entries.
+        Each must include 'mmrDelta'.
+    current_streak_count: number of trailing cells to outline as the active
+        streak. 0 disables the highlight.
+    target_cells: nominal slot count for the strip. When fewer events are
+        provided, the x-axis is padded so cell pixel size stays constant.
+    """
+    b = BytesIO()
+
+    matplotlib.rcParams.update(
+        matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
+    )
+
+    if game_mode == "12p":
+        game_mode_display = "12 player"
+    elif game_mode == "24p":
+        game_mode_display = "24 player"
+    else:
+        game_mode_display = game_mode
+
+    n = len(events)
+    if n == 0:
+        # Defensive: callers should already short-circuit, but never crash here.
+        n = 1
+
+    fig = Figure(figsize=(10, 2.0))
+    gs = gridspec.GridSpec(
+        3, 1, height_ratios=[0.45, 0.30, 1.0], hspace=0.05, figure=fig
+    )
+
+    # --- Header ---
+    ax_header = fig.add_subplot(gs[0])
+    ax_header.set_axis_off()
+    try:
+        favicon = mpimg.imread("src/common/favicon.ico")
+        ax_inset = inset_axes(
+            ax_header,
+            width="4%",
+            height="80%",
+            loc="center left",
+            borderpad=0.5,
+        )
+        ax_inset.imshow(favicon)
+        ax_inset.set_axis_off()
+    except Exception:
+        pass
+    ax_header.text(
+        0.08,
+        0.5,
+        "MKCentral MKWorld Lounge",
+        transform=ax_header.transAxes,
+        fontsize=13,
+        fontweight="bold",
+        color="white",
+        verticalalignment="center",
+    )
+    ax_header.axhline(y=0, color="white", linewidth=0.5, alpha=0.3)
+
+    # --- Title ---
+    ax_title = fig.add_subplot(gs[1])
+    ax_title.set_axis_off()
+    flag = f" [{country_code}]" if country_code else ""
+    mmr_suffix = f" · {mmr} MMR" if mmr is not None else ""
+    title_text = (
+        f"Season {season} ({game_mode_display}) Recent Form: "
+        f"{player_name}{mmr_suffix}{flag}"
+    )
+    ax_title.text(
+        0.5,
+        0.5,
+        title_text,
+        transform=ax_title.transAxes,
+        fontsize=11,
+        color="white",
+        horizontalalignment="center",
+        verticalalignment="center",
+    )
+
+    # --- Strip ---
+    ax = fig.add_subplot(gs[2])
+    pad = max(0.0, (target_cells - n) / 2)
+    ax.set_xlim(-pad, n + pad)
+    # Extra room below the cells for the recency labels
+    ax.set_ylim(-0.30, 1.0)
+    ax.set_axis_off()
+
+    win_color = "#2ecc71"
+    loss_color = "#e74c3c"
+    tie_color = "#7f8c8d"
+
+    streak_start_idx = n - current_streak_count if current_streak_count > 0 else n
+
+    for i, e in enumerate(events):
+        delta = e.get("mmrDelta", 0)
+        if delta > 0:
+            color = win_color
+        elif delta < 0:
+            color = loss_color
+        else:
+            color = tie_color
+
+        is_streak = i >= streak_start_idx
+        edge_color = "white" if is_streak else "#1a3a6a"
+        edge_width = 2.5 if is_streak else 0.5
+
+        rect = mpatches.FancyBboxPatch(
+            (i + 0.06, 0.18),
+            0.88,
+            0.72,
+            boxstyle="round,pad=0.0,rounding_size=0.08",
+            linewidth=edge_width,
+            edgecolor=edge_color,
+            facecolor=color,
+        )
+        ax.add_patch(rect)
+
+        ax.text(
+            i + 0.5,
+            0.54,
+            f"{delta:+d}",
+            ha="center",
+            va="center",
+            color="white",
+            fontsize=10,
+            fontweight="bold",
+        )
+
+    # Recency labels — anchored to the actual cell range, not the padded edges,
+    # so they always sit directly under the leftmost/rightmost cells.
+    ax.text(
+        0.5,
+        -0.08,
+        "← older",
+        ha="center",
+        va="top",
+        color="white",
+        alpha=0.75,
+        fontsize=9,
+    )
+    ax.text(
+        n - 0.5,
+        -0.08,
+        "newer →",
+        ha="center",
+        va="top",
+        color="white",
+        alpha=0.75,
+        fontsize=9,
+    )
+
+    fig.savefig(b, format="png", bbox_inches="tight", dpi=150, pad_inches=0.1)
+    b.seek(0)
+    fig.clf()
+
+    return b
+
+
 def create_h2h_plot(
     stats: dict,
     season: int,
@@ -651,7 +820,7 @@ def create_h2h_plot(
     def _draw_highlight(ax, owner, win, other):
         ax.set_axis_off()
         ax.add_patch(
-            matplotlib.patches.FancyBboxPatch(
+            mpatches.FancyBboxPatch(
                 (0.01, 0.05),
                 0.98,
                 0.9,
