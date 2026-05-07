@@ -9,6 +9,7 @@ import matplotlib.image as mpimg
 import matplotlib.patches as mpatches
 import numpy as np
 from matplotlib.figure import Figure
+from matplotlib.offsetbox import AnchoredOffsetbox, HPacker, TextArea
 from matplotlib.ticker import MaxNLocator
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
@@ -727,6 +728,487 @@ def create_streak_plot(
         alpha=0.75,
         fontsize=9,
     )
+
+    fig.savefig(b, format="png", bbox_inches="tight", dpi=150, pad_inches=0.1)
+    b.seek(0)
+    fig.clf()
+
+    return b
+
+
+def create_partner_plot(
+    stats: dict,
+    season: int,
+    game_mode: str,
+):
+    """Render a partnership comparison as a styled image.
+
+    stats keys:
+        p1_name, p2_name, p1_country, p2_country,
+        p1_mmr, p2_mmr,
+        shared, wins, losses, total_delta,
+        p1_avg_score, p2_avg_score,
+        p1_best_score, p2_best_score,
+        avg_rank, win_rate,
+        p1_best_match, p2_best_match  (each: dict with date, tier, table_id,
+            self_score, other_score, rank, num_teams, delta, or None),
+        recent (list of dicts: date, tier, p1_score, p2_score, rank,
+                num_teams, delta)
+    """
+    b = BytesIO()
+
+    matplotlib.rcParams.update(
+        matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
+    )
+
+    if game_mode == "12p":
+        game_mode_display = "12 player"
+    elif game_mode == "24p":
+        game_mode_display = "24 player"
+    else:
+        game_mode_display = game_mode
+
+    p1, p2 = stats["p1_name"], stats["p2_name"]
+    recent = stats["recent"]
+
+    # --- Layout sizing ---
+    header_h = 0.45
+    title_h = 0.30
+    body_h = 2.6
+    highlight_h = 1.0
+    recent_rows = len(recent)
+    recent_h = 0.40 * (recent_rows + 1) if recent_rows else 0.0
+
+    fig_height = header_h + title_h + body_h + highlight_h + recent_h + 0.4
+    fig = Figure(figsize=(11, fig_height))
+    gs = gridspec.GridSpec(
+        5,
+        1,
+        height_ratios=[
+            header_h,
+            title_h,
+            body_h,
+            highlight_h,
+            max(recent_h, 0.001),
+        ],
+        hspace=0.18,
+        figure=fig,
+    )
+
+    # --- Header ---
+    ax_header = fig.add_subplot(gs[0])
+    ax_header.set_axis_off()
+    try:
+        favicon = mpimg.imread("src/common/favicon.ico")
+        ax_inset = inset_axes(
+            ax_header,
+            width="4%",
+            height="80%",
+            loc="center left",
+            borderpad=0.5,
+        )
+        ax_inset.imshow(favicon)
+        ax_inset.set_axis_off()
+    except Exception:
+        pass
+    ax_header.text(
+        0.08,
+        0.5,
+        "MKCentral MKWorld Lounge",
+        transform=ax_header.transAxes,
+        fontsize=13,
+        fontweight="bold",
+        color="white",
+        verticalalignment="center",
+    )
+    ax_header.axhline(y=0, color="white", linewidth=0.5, alpha=0.3)
+
+    # --- Title ---
+    ax_title = fig.add_subplot(gs[1])
+    ax_title.set_axis_off()
+    title_text = f"Season {season} ({game_mode_display}) Partner Stats"
+    ax_title.text(
+        0.5,
+        0.5,
+        title_text,
+        transform=ax_title.transAxes,
+        fontsize=11,
+        color="white",
+        horizontalalignment="center",
+        verticalalignment="center",
+    )
+
+    # --- Body: P1 stats | center team block | P2 stats ---
+    gs_body = gs[2].subgridspec(1, 3, width_ratios=[1, 1, 1], wspace=0.05)
+
+    def _draw_player_column(ax, name, country, mmr, avg_score, best_score):
+        ax.set_axis_off()
+        flag = f" [{country}]" if country else ""
+        ax.text(
+            0.5,
+            0.93,
+            f"{name}{flag}",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="white",
+            fontsize=14,
+            fontweight="bold",
+        )
+        if mmr is not None:
+            ax.text(
+                0.5,
+                0.83,
+                f"{mmr:,} mmr",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                color="#9CCBD6",
+                fontsize=9,
+            )
+        # Stat 1: avg score
+        ax.text(
+            0.5,
+            0.55,
+            f"{avg_score:.2f}",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="white",
+            fontsize=20,
+            fontweight="bold",
+        )
+        ax.text(
+            0.5,
+            0.45,
+            "avg score",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="#9CCBD6",
+            fontsize=9,
+        )
+        # Stat 2: best score
+        ax.text(
+            0.5,
+            0.20,
+            f"{best_score}",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="white",
+            fontsize=20,
+            fontweight="bold",
+        )
+        ax.text(
+            0.5,
+            0.10,
+            "best score",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="#9CCBD6",
+            fontsize=9,
+        )
+
+    ax_p1 = fig.add_subplot(gs_body[0])
+    _draw_player_column(
+        ax_p1,
+        p1,
+        stats.get("p1_country", ""),
+        stats.get("p1_mmr"),
+        stats["p1_avg_score"],
+        stats["p1_best_score"],
+    )
+
+    ax_center = fig.add_subplot(gs_body[1])
+    ax_center.set_axis_off()
+    win_color = "#7CFF9E"
+    loss_color = "#FF7C8A"
+    # Record: render the W-L numbers as three pieces so wins/losses can be
+    # colored independently, then add small color-matched labels under each
+    # so the green/red coding reads unambiguously.
+    # Use HPacker so the dash always has equal pixel-spacing to each digit,
+    # regardless of glyph shape (rounded "0" vs straight "1" etc.).
+    num_box = HPacker(
+        children=[
+            TextArea(
+                str(stats["wins"]),
+                textprops=dict(color=win_color, fontsize=28, fontweight="bold"),
+            ),
+            TextArea(
+                "-",
+                textprops=dict(color="white", fontsize=28, fontweight="bold"),
+            ),
+            TextArea(
+                str(stats["losses"]),
+                textprops=dict(color=loss_color, fontsize=28, fontweight="bold"),
+            ),
+        ],
+        align="center",
+        pad=0,
+        sep=8,
+    )
+    ax_center.add_artist(
+        AnchoredOffsetbox(
+            loc="center",
+            child=num_box,
+            frameon=False,
+            pad=0,
+            bbox_to_anchor=(0.5, 0.93),
+            bbox_transform=ax_center.transAxes,
+        )
+    )
+    label_box = HPacker(
+        children=[
+            TextArea(
+                "wins",
+                textprops=dict(color=win_color, fontsize=9, fontweight="bold"),
+            ),
+            TextArea(
+                "losses",
+                textprops=dict(color=loss_color, fontsize=9, fontweight="bold"),
+            ),
+        ],
+        align="center",
+        pad=0,
+        sep=10,
+    )
+    ax_center.add_artist(
+        AnchoredOffsetbox(
+            loc="center",
+            child=label_box,
+            frameon=False,
+            pad=0,
+            bbox_to_anchor=(0.5, 0.78),
+            bbox_transform=ax_center.transAxes,
+        )
+    )
+    sub_caption = (
+        f"S{season} · {game_mode_display} · "
+        f"{stats['shared']} match"
+        + ("es" if stats["shared"] != 1 else "")
+        + " together"
+    )
+    ax_center.text(
+        0.5,
+        0.68,
+        sub_caption,
+        transform=ax_center.transAxes,
+        ha="center",
+        va="center",
+        color="#9CCBD6",
+        fontsize=8,
+    )
+    # Win rate (sits a bit below the W-L block to balance the card)
+    ax_center.text(
+        0.5,
+        0.45,
+        f"{stats['win_rate'] * 100:.1f}%",
+        transform=ax_center.transAxes,
+        ha="center",
+        va="center",
+        color="white",
+        fontsize=20,
+        fontweight="bold",
+    )
+    ax_center.text(
+        0.5,
+        0.35,
+        "win rate",
+        transform=ax_center.transAxes,
+        ha="center",
+        va="center",
+        color="#9CCBD6",
+        fontsize=9,
+    )
+    # Total MMR delta (vertically aligned with side columns' best score block)
+    total_delta = stats["total_delta"]
+    delta_color = (
+        win_color if total_delta > 0 else (loss_color if total_delta < 0 else "white")
+    )
+    ax_center.text(
+        0.5,
+        0.20,
+        f"{total_delta:+,d}",
+        transform=ax_center.transAxes,
+        ha="center",
+        va="center",
+        color=delta_color,
+        fontsize=20,
+        fontweight="bold",
+    )
+    ax_center.text(
+        0.5,
+        0.10,
+        "mmr delta",
+        transform=ax_center.transAxes,
+        ha="center",
+        va="center",
+        color="#9CCBD6",
+        fontsize=9,
+    )
+
+    ax_p2 = fig.add_subplot(gs_body[2])
+    _draw_player_column(
+        ax_p2,
+        p2,
+        stats.get("p2_country", ""),
+        stats.get("p2_mmr"),
+        stats["p2_avg_score"],
+        stats["p2_best_score"],
+    )
+
+    # --- Highlight cards: best win + worst loss together ---
+    gs_high = gs[3].subgridspec(1, 2, wspace=0.04)
+
+    def _short(n, max_len=12):
+        return n if len(n) <= max_len else n[: max_len - 1] + "…"
+
+    def _draw_highlight(ax, owner, partner_name, match):
+        ax.set_axis_off()
+        ax.add_patch(
+            mpatches.FancyBboxPatch(
+                (0.01, 0.05),
+                0.98,
+                0.9,
+                boxstyle="round,pad=0.01,rounding_size=0.02",
+                linewidth=0.8,
+                edgecolor="#3a5a8a",
+                facecolor="#0a2d61",
+                transform=ax.transAxes,
+            )
+        )
+        ax.text(
+            0.5,
+            0.82,
+            f"{owner}'s best performance",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="white",
+            fontsize=11,
+            fontweight="bold",
+        )
+        if match:
+            meta_parts = [match["date"], f"tier {match['tier']}"]
+            if match.get("table_id") is not None:
+                meta_parts.append(f"table {match['table_id']}")
+            ax.text(
+                0.5,
+                0.60,
+                " · ".join(meta_parts),
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                color="#9CCBD6",
+                fontsize=9,
+            )
+            ax.text(
+                0.5,
+                0.34,
+                f"top score: {match['self_score']} pts",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                color="#7CFF9E",
+                fontsize=12,
+                fontweight="bold",
+            )
+            rank_str = (
+                f"{match['rank']}/{match['num_teams']}"
+                if match.get("num_teams")
+                else f"{match['rank']}"
+            )
+            ax.text(
+                0.5,
+                0.14,
+                f"{_short(partner_name)} scored {match['other_score']} · "
+                f"placed {rank_str} · {match['delta']:+d} mmr",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                color="#9CCBD6",
+                fontsize=9,
+            )
+        else:
+            ax.text(
+                0.5,
+                0.40,
+                "No matches yet.",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                color="#9CCBD6",
+                fontsize=9,
+            )
+
+    ax_h1 = fig.add_subplot(gs_high[0])
+    _draw_highlight(ax_h1, p1, p2, stats.get("p1_best_match"))
+    ax_h2 = fig.add_subplot(gs_high[1])
+    _draw_highlight(ax_h2, p2, p1, stats.get("p2_best_match"))
+
+    # --- Recent matches ---
+    if recent:
+        ax_rec = fig.add_subplot(gs[4])
+        ax_rec.set_axis_off()
+        n1, n2 = _short(p1, 16), _short(p2, 16)
+        rec_headers = [
+            "Date",
+            "Tier",
+            f"{n1}\nScore",
+            f"{n2}\nScore",
+            "Rank",
+            "MMR Δ",
+        ]
+        rec_cells = []
+        for r in recent:
+            rank_str = (
+                f"{r['rank']}/{r['num_teams']}"
+                if r.get("num_teams")
+                else f"{r['rank']}"
+            )
+            rec_cells.append(
+                [
+                    r["date"],
+                    r["tier"],
+                    f"{r['p1_score']}",
+                    f"{r['p2_score']}",
+                    rank_str,
+                    f"{r['delta']:+d}",
+                ]
+            )
+        rec_table = ax_rec.table(
+            cellText=rec_cells,
+            colLabels=rec_headers,
+            cellLoc="center",
+            bbox=[0, 0, 1, 1],
+        )
+        rec_table.auto_set_font_size(False)
+        rec_table.set_fontsize(10)
+        n_cols = len(rec_headers)
+        for col in range(n_cols):
+            h = rec_table[(0, col)]
+            h.set_facecolor("#08234a")
+            h.set_edgecolor("white")
+            h.set_text_props(color="white", fontweight="bold")
+        delta_col = rec_headers.index("MMR Δ")
+        for row_i in range(1, len(rec_cells) + 1):
+            for col in range(n_cols):
+                cell = rec_table[(row_i, col)]
+                cell.set_edgecolor("#3a5a8a")
+                cell.set_linewidth(0.5)
+                cell.set_facecolor("#0a2d61" if row_i % 2 == 1 else "#0d3674")
+                cell.set_text_props(color="white")
+            delta = recent[row_i - 1]["delta"]
+            if delta > 0:
+                rec_table[(row_i, delta_col)].set_text_props(
+                    color="#7CFF9E", fontweight="bold"
+                )
+            elif delta < 0:
+                rec_table[(row_i, delta_col)].set_text_props(
+                    color="#FF7C8A", fontweight="bold"
+                )
 
     fig.savefig(b, format="png", bbox_inches="tight", dpi=150, pad_inches=0.1)
     b.seek(0)
