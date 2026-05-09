@@ -7,9 +7,9 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 import common.data_handler as data_handler
+from common.checks import is_mod
 
 load_dotenv()
-mods_role_ids = [int(role_id) for role_id in os.getenv("Mods_Role_ID").split(",")]
 
 
 class Staff(commands.Cog):
@@ -18,6 +18,7 @@ class Staff(commands.Cog):
 
     @app_commands.command(name="data", description="Display player data")
     @app_commands.describe(name="Player name, discord id, or mkc id (optional)")
+    @is_mod()
     async def data(self, interaction: discord.Interaction, name: str | None = None):
         if name is None:
             name = str(interaction.user.id)
