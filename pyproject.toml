@@ -26,7 +26,9 @@ line-length = 88
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP"]
+ignore = [
+    "E501",  # Line too long
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

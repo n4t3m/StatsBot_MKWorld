@@ -7,9 +7,10 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 import common.data_handler as data_handler
+from common.checks import is_mod
 
 load_dotenv()
-mods_role_ids = set([int(role_id) for role_id in os.getenv("Mods_Role_ID").split(",")])
+
 
 class Staff(commands.Cog):
     def __init__(self, bot):
@@ -17,14 +18,8 @@ class Staff(commands.Cog):
 
     @app_commands.command(name="data", description="Display player data")
     @app_commands.describe(name="Player name, discord id, or mkc id (optional)")
+    @is_mod()
     async def data(self, interaction: discord.Interaction, name: str | None = None):
-        user_role_set = {role.id for role in interaction.user.roles}
-        if mods_role_ids.isdisjoint(user_role_set):
-            await interaction.response.send_message(
-                f"You don't have the required role to execute this command.", ephemeral=True
-            )
-            return
-        
         if name is None:
             name = str(interaction.user.id)
         player = await data_handler.fetch_player(

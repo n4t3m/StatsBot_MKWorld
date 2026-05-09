@@ -38,6 +38,26 @@ class StatsBot(commands.AutoShardedBot):
 bot = StatsBot()
 
 
+@bot.tree.error
+async def on_app_command_error(
+    interaction: discord.Interaction,
+    error: app_commands.AppCommandError,
+):
+    if isinstance(error, app_commands.MissingAnyRole):
+        msg = "You don't have the required role to execute this command."
+    elif isinstance(error, app_commands.NoPrivateMessage):
+        msg = "This command cannot be used in private messages."
+    elif isinstance(error, app_commands.CheckFailure):
+        msg = "You don't meet the requirements to execute this command."
+    else:
+        logging.error(f"App command error: {error}")
+        msg = "An unexpected error occurred. Please try again later."
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, app_commands.CommandNotFound):
