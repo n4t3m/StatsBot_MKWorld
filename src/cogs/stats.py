@@ -1197,10 +1197,12 @@ class Stats(commands.Cog):
         else:
             kind = "Win" if latest_sign == 1 else "Loss"
             cur_label = f"Current {kind} Streak"
-            cur_value = f"```\n{cur_count} matches ({cur_delta:+d} MMR)\n```"
+            cur_noun = "match" if cur_count == 1 else "matches"
+            cur_value = f"```\n{cur_count} {cur_noun} ({cur_delta:+d} MMR)\n```"
 
+        win_noun = "match" if longest_win["count"] == 1 else "matches"
         win_value = (
-            f"```\n{longest_win['count']} matches ({longest_win['delta']:+d} MMR)\n```"
+            f"```\n{longest_win['count']} {win_noun} ({longest_win['delta']:+d} MMR)\n```"
             if longest_win["count"] > 0
             else "```\nNone\n```"
         )
@@ -1208,8 +1210,9 @@ class Stats(commands.Cog):
             longest_win["start"], longest_win["end"], active=win_active
         )
 
+        loss_noun = "match" if longest_loss["count"] == 1 else "matches"
         loss_value = (
-            f"```\n{longest_loss['count']} matches ({longest_loss['delta']:+d} MMR)\n```"  # noqa: E501
+            f"```\n{longest_loss['count']} {loss_noun} ({longest_loss['delta']:+d} MMR)\n```"  # noqa: E501
             if longest_loss["count"] > 0
             else "```\nNone\n```"
         )
