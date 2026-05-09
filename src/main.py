@@ -86,11 +86,25 @@ async def on_command_error(ctx, error):
         await ctx.send("An unexpected error occurred. Please try again later.")
 
 
+def get_bot_token() -> str:
+    env = os.getenv("ENVIRONMENT", "staging").lower()
+    if env not in ("staging", "production"):
+        raise RuntimeError(
+            f"ENVIRONMENT must be 'staging' or 'production', got '{env}'"
+        )
+    token_key = f"DISCORD_BOT_TOKEN_{env.upper()}"
+    token = os.getenv(token_key)
+    if not token:
+        raise RuntimeError(f"{token_key} is not set in environment")
+    logging.info(f"Starting bot in {env.upper()} mode")
+    return token
+
+
 async def main():
     async with bot:
         for extension in cogs:
             await bot.load_extension(extension)
-        await bot.start(os.getenv("DISCORD_BOT_TOKEN"))
+        await bot.start(get_bot_token())
 
 
 asyncio.run(main())
