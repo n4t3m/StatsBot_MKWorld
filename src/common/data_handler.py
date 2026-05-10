@@ -9,8 +9,8 @@ async def fetch_player(search_value: str | int, season: int, game_mode: str):
         return await api_get_mkworld.fetch_player_by_fc(search_value, season, game_mode)
 
     # 数字のみの場合
-    if search_value.isdigit() or search_value is None:
-        if search_value is None or len(search_value) >= 17:
+    if search_value.isdigit():
+        if len(search_value) >= 17:
             return await api_get_mkworld.fetch_player_by_discord(
                 search_value, season, game_mode
             )
@@ -31,8 +31,8 @@ async def fetch_player_info(search_value: str | int, season: int, game_mode: str
         )
 
     # 数字のみの場合
-    if search_value.isdigit() or search_value is None:
-        if search_value is None or len(search_value) >= 17:
+    if search_value.isdigit():
+        if len(search_value) >= 17:
             return await api_get_mkworld.fetch_player_info_by_discord(
                 search_value, season, game_mode
             )
