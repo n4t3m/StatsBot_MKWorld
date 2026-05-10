@@ -2,6 +2,7 @@ import datetime as dt
 import os
 import statistics
 from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import discord
 from discord import app_commands
@@ -21,6 +22,43 @@ from common.plotting import (
     create_streak_plot,
     create_tiers_plot,
 )
+
+# Common timezone abbreviations routed to IANA zones so DST is automatic.
+# Ambiguous picks: CST -> US Central, IST -> India.
+ABBREV_TO_IANA = {
+    "UTC": "UTC", "GMT": "Etc/GMT",
+    "EST": "America/New_York", "EDT": "America/New_York",
+    "CST": "America/Chicago", "CDT": "America/Chicago",
+    "MST": "America/Denver", "MDT": "America/Denver",
+    "PST": "America/Los_Angeles", "PDT": "America/Los_Angeles",
+    "AST": "America/Halifax", "ADT": "America/Halifax",
+    "NST": "America/St_Johns", "NDT": "America/St_Johns",
+    "AKST": "America/Anchorage", "AKDT": "America/Anchorage",
+    "HST": "Pacific/Honolulu", "HDT": "Pacific/Honolulu",
+    "CLT": "America/Santiago", "CLST": "America/Santiago",
+    "BST": "Europe/London",
+    "CET": "Europe/Paris", "CEST": "Europe/Paris",
+    "IST": "Asia/Kolkata",
+    "JST": "Asia/Tokyo",
+    "KST": "Asia/Seoul",
+    "AEST": "Australia/Sydney", "AEDT": "Australia/Sydney",
+    "ACST": "Australia/Adelaide", "ACDT": "Australia/Adelaide",
+    "AWST": "Australia/Perth", "AWDT": "Australia/Perth",
+}
+
+
+def _resolve_timezone(tz_str: str | None) -> tuple[str, ZoneInfo] | None:
+    if not tz_str:
+        return "UTC", ZoneInfo("UTC")
+    upper = tz_str.upper()
+    iana = ABBREV_TO_IANA.get(upper)
+    if iana is None:
+        return None
+    try:
+        return upper, ZoneInfo(iana)
+    except ZoneInfoNotFoundError:
+        return None
+
 
 TIER_ORDER = [
     "SQ",
@@ -1620,6 +1658,208 @@ class Stats(commands.Cog):
         embed.set_thumbnail(url=rank_data["url"])
 
         await interaction.followup.send(embed=embed, file=file)
+
+    async def _activity_histogram(
+        self,
+        interaction: discord.Interaction,
+        name: str | None,
+        season: int | None,
+        game_mode: str | None,
+        timezone: str | None,
+        period: str,
+    ):
+        await interaction.response.defer()
+
+        resolved = _resolve_timezone(timezone)
+        if resolved is None:
+            supported = ", ".join(sorted(ABBREV_TO_IANA))
+            await interaction.followup.send(
+                f"Unknown timezone '{timezone}'. Supported: {supported}.",
+                ephemeral=True,
+            )
+            return
+        tz_label, tz = resolved
+
+        if name is None:
+            name = str(interaction.user.id)
+        player = await data_handler.fetch_player_info(name, season, game_mode)
+
+        if player is None:
+            await interaction.followup.send(
+                f"Player '{name}' not found.", ephemeral=True
+            )
+            return
+
+        table_events = [
+            e for e in player.get("mmrChanges", []) if e.get("reason") == "Table"
+        ]
+
+        if period == "daily":
+            cutoff_date = dt.datetime.now(tz).date() - dt.timedelta(days=14)
+            buckets: dict = {}
+            for e in table_events:
+                local_dt = datetime.fromisoformat(e["time"]).astimezone(tz)
+                d = local_dt.date()
+                if d >= cutoff_date:
+                    b = buckets.setdefault(d, {"count": 0, "delta": 0})
+                    b["count"] += 1
+                    b["delta"] += e.get("mmrDelta", 0)
+            ordered = sorted(buckets.items())
+            lines = []
+            for d, b in ordered:
+                ts = int(
+                    dt.datetime.combine(d, dt.time(0, 0), tzinfo=tz).timestamp()
+                )
+                lines.append(f"<t:{ts}:d> : {b['count']} ({b['delta']:+d} MMR)")
+            field_value = "\n".join(lines) if lines else ""
+            empty_msg = (
+                f"{player['name']} has no {game_mode} matches in the last 14 days."
+            )
+            title = f"S{season} Daily Data - MKWorld{game_mode.upper()}"
+        elif period == "weekly":
+            buckets = {}
+            for e in table_events:
+                local_dt = datetime.fromisoformat(e["time"]).astimezone(tz)
+                d = local_dt.date()
+                monday = d - dt.timedelta(days=d.weekday())
+                sunday = monday + dt.timedelta(days=6)
+                key = (monday, sunday)
+                b = buckets.setdefault(key, {"count": 0, "delta": 0})
+                b["count"] += 1
+                b["delta"] += e.get("mmrDelta", 0)
+            ordered = sorted(buckets.items(), key=lambda kv: kv[0][0])
+            lines = [
+                f"{monday.isoformat()}/{sunday.isoformat()}: "
+                f"{b['count']} ({b['delta']:+d} MMR)"
+                for (monday, sunday), b in ordered
+            ]
+            field_value = "```\n" + "\n".join(lines) + "\n```" if lines else ""
+            empty_msg = f"{player['name']} has no {game_mode} matches this season."
+            title = f"S{season} Weekly Data - MKWorld{game_mode.upper()}"
+        else:  # monthly
+            buckets = {}
+            for e in table_events:
+                local_dt = datetime.fromisoformat(e["time"]).astimezone(tz)
+                key = local_dt.strftime("%Y-%m")
+                b = buckets.setdefault(key, {"count": 0, "delta": 0})
+                b["count"] += 1
+                b["delta"] += e.get("mmrDelta", 0)
+            ordered = sorted(buckets.items())
+            lines = [
+                f"{ym}: {b['count']} ({b['delta']:+d} MMR)" for ym, b in ordered
+            ]
+            field_value = "\n".join(lines) if lines else ""
+            empty_msg = f"{player['name']} has no {game_mode} matches this season."
+            title = f"S{season} Monthly Data - MKWorld{game_mode.upper()}"
+
+        if not lines:
+            await interaction.followup.send(empty_msg, ephemeral=True)
+            return
+
+        total = sum(b["count"] for _, b in ordered)
+        total_delta = sum(b["delta"] for _, b in ordered)
+
+        mmr = player.get("mmr")
+        mmr_part = f" - {mmr} MMR" if mmr is not None else ""
+
+        rank_data = constants.get_rank_data(season)[player["rank"]]
+        embed = discord.Embed(
+            title=title,
+            url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}?p={game_mode[0:1]}",
+            description=f"### {player['name']} [{player['countryCode']}]{mmr_part}",
+            colour=int(f"0x{rank_data['color'][1:]}", 16),
+            timestamp=dt.datetime.now(dt.UTC),
+        )
+        embed.add_field(
+            name=f"Events Played: {total} ({total_delta:+d} MMR)",
+            value=field_value,
+            inline=False,
+        )
+        embed.set_footer(text=f"Timezone: {tz_label} · MKCentral Lounge")
+        embed.set_thumbnail(url=rank_data["url"])
+
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(
+        name="dd", description="Show MKWorld events played per day (last 14 days)"
+    )
+    @app_commands.describe(
+        name="Lounge name, discord id, mkc id (optional)",
+        season="Season number (default: current season)",
+        game_mode="Game mode (default: 24p)",
+        timezone="Timezone abbreviation, e.g. EST, JST (default: UTC)",
+    )
+    @app_commands.choices(
+        game_mode=[
+            app_commands.Choice(name="24p", value="24p"),
+            app_commands.Choice(name="12p", value="12p"),
+        ]
+    )
+    async def dd(
+        self,
+        interaction: discord.Interaction,
+        name: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = "24p",
+        timezone: str | None = "UTC",
+    ):
+        await self._activity_histogram(
+            interaction, name, season, game_mode, timezone, "daily"
+        )
+
+    @app_commands.command(
+        name="wd", description="Show MKWorld events played per week (this season)"
+    )
+    @app_commands.describe(
+        name="Lounge name, discord id, mkc id (optional)",
+        season="Season number (default: current season)",
+        game_mode="Game mode (default: 24p)",
+        timezone="Timezone abbreviation, e.g. EST, JST (default: UTC)",
+    )
+    @app_commands.choices(
+        game_mode=[
+            app_commands.Choice(name="24p", value="24p"),
+            app_commands.Choice(name="12p", value="12p"),
+        ]
+    )
+    async def wd(
+        self,
+        interaction: discord.Interaction,
+        name: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = "24p",
+        timezone: str | None = "UTC",
+    ):
+        await self._activity_histogram(
+            interaction, name, season, game_mode, timezone, "weekly"
+        )
+
+    @app_commands.command(
+        name="md", description="Show MKWorld events played per month (this season)"
+    )
+    @app_commands.describe(
+        name="Lounge name, discord id, mkc id (optional)",
+        season="Season number (default: current season)",
+        game_mode="Game mode (default: 24p)",
+        timezone="Timezone abbreviation, e.g. EST, JST (default: UTC)",
+    )
+    @app_commands.choices(
+        game_mode=[
+            app_commands.Choice(name="24p", value="24p"),
+            app_commands.Choice(name="12p", value="12p"),
+        ]
+    )
+    async def md(
+        self,
+        interaction: discord.Interaction,
+        name: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = "24p",
+        timezone: str | None = "UTC",
+    ):
+        await self._activity_histogram(
+            interaction, name, season, game_mode, timezone, "monthly"
+        )
 
 
 async def setup(bot):
