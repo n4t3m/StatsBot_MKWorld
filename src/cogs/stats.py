@@ -38,9 +38,17 @@ TIER_ORDER = [
     "F",
 ]
 
-FORMAT_ORDER = ["FFA", "2v2", "3v3", "4v4", "6v6", "12v12"]
+FORMAT_ORDER = ["FFA", "2v2", "3v3", "4v4", "6v6", "8v8", "12v12"]
 
-_TEAM_SIZE_TO_FORMAT = {1: "FFA", 2: "2v2", 3: "3v3", 4: "4v4", 6: "6v6", 12: "12v12"}
+_TEAM_SIZE_TO_FORMAT = {
+    1: "FFA",
+    2: "2v2",
+    3: "3v3",
+    4: "4v4",
+    6: "6v6",
+    8: "8v8",
+    12: "12v12",
+}
 
 
 def _derive_format(num_teams: int, game_mode: str) -> str:

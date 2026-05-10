@@ -68,7 +68,7 @@ Show a player's performance broken down by tier.
 | `game_mode` | No | `24p` or `12p` (default: `24p`) |
 
 #### `/fs`
-Show a player's performance broken down by format (FFA, 2v2, 3v3, 4v4, 6v6, 12v12).
+Show a player's performance broken down by format (FFA, 2v2, 3v3, 4v4, 6v6, 8v8, 12v12).
 
 | Parameter | Required | Description |
 |---|---|---|
@@ -191,7 +191,7 @@ MMR 推移グラフ付きの詳細なプレイヤー統計情報を表示。
 | `game_mode` | No | `24p` または `12p`（デフォルト: `24p`） |
 
 #### `/fs`
-プレイヤーのフォーマット別（FFA・2v2・3v3・4v4・6v6・12v12）パフォーマンスを表示。
+プレイヤーのフォーマット別（FFA・2v2・3v3・4v4・6v6・8v8・12v12）パフォーマンスを表示。
 
 | パラメータ | 必須 | 説明 |
 |---|---|---|
