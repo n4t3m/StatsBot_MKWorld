@@ -67,6 +67,15 @@ Show a player's performance broken down by tier.
 | `season` | No | Season number (default: current season) |
 | `game_mode` | No | `24p` or `12p` (default: `24p`) |
 
+#### `/fs`
+Show a player's performance broken down by format (FFA, 2v2, 3v3, 4v4, 6v6, 12v12).
+
+| Parameter | Required | Description |
+|---|---|---|
+| `name` | No | Lounge name, Discord ID, or MKC ID |
+| `season` | No | Season number (default: current season) |
+| `game_mode` | No | `24p` or `12p` (default: `24p`) |
+
 #### `/h2h`
 Compare two players' shared matches (head-to-head).
 
@@ -174,6 +183,15 @@ MMR 推移グラフ付きの詳細なプレイヤー統計情報を表示。
 
 #### `/tiers`
 プレイヤーのティア別パフォーマンスを表示。
+
+| パラメータ | 必須 | 説明 |
+|---|---|---|
+| `name` | No | ラウンジ名・Discord ID・MKC ID |
+| `season` | No | シーズン番号（デフォルト: 現在のシーズン） |
+| `game_mode` | No | `24p` または `12p`（デフォルト: `24p`） |
+
+#### `/fs`
+プレイヤーのフォーマット別（FFA・2v2・3v3・4v4・6v6・12v12）パフォーマンスを表示。
 
 | パラメータ | 必須 | 説明 |
 |---|---|---|
