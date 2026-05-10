@@ -50,7 +50,13 @@ async def on_app_command_error(
     elif isinstance(error, app_commands.CheckFailure):
         msg = "You don't meet the requirements to execute this command."
     else:
-        logging.error(f"App command error: {error}")
+        cmd_name = interaction.command.name if interaction.command else "?"
+        logging.error(
+            f"App command error in /{cmd_name} "
+            f"by {interaction.user} (id={interaction.user.id}) "
+            f"in guild={interaction.guild_id}",
+            exc_info=error,
+        )
         msg = "An unexpected error occurred. Please try again later."
     if interaction.response.is_done():
         await interaction.followup.send(msg, ephemeral=True)

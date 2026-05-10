@@ -106,6 +106,10 @@ uv run pytest
 uv run pre-commit run --all-files
 ```
 
+### Disclaimer
+
+This is an unofficial tool. "Mario Kart" is a trademark of Nintendo. This project is **not affiliated with, endorsed by, or sponsored by Nintendo**. The bot relies on the public [MKCentral Lounge API](https://github.com/VikeMK/Lounge-API). Use this software at your own risk.
+
 ### License
 
 This project is licensed under the [MIT License](LICENSE).
@@ -213,6 +217,10 @@ uv run pytest
 # pre-commit フックの実行
 uv run pre-commit run --all-files
 ```
+
+### 免責事項
+
+これは非公式のツールです。「マリオカート」は Nintendo の商標です。本プロジェクトは **Nintendo と提携しておらず、Nintendo から推奨・後援も受けていません**。本 Bot は公開されている [MKCentral Lounge API](https://github.com/VikeMK/Lounge-API) を利用しています。本ソフトウェアは自己責任でご利用ください。
 
 ### ライセンス
 
