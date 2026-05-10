@@ -13,6 +13,7 @@ import common.constants as constants
 import common.data_handler as data_handler
 from common.calculation import calc_mmr_deltas
 from common.plotting import (
+    create_formats_plot,
     create_h2h_plot,
     create_plot,
     create_scores_plot,
@@ -36,6 +37,17 @@ TIER_ORDER = [
     "EF",
     "F",
 ]
+
+FORMAT_ORDER = ["FFA", "2v2", "3v3", "4v4", "6v6", "12v12"]
+
+_TEAM_SIZE_TO_FORMAT = {1: "FFA", 2: "2v2", 3: "3v3", 4: "4v4", 6: "6v6", 12: "12v12"}
+
+
+def _derive_format(num_teams: int, game_mode: str) -> str:
+    total = 24 if game_mode == "24p" else 12
+    if not num_teams or total % num_teams != 0:
+        return "?"
+    return _TEAM_SIZE_TO_FORMAT.get(total // num_teams, "?")
 
 # load environment variables from .env file
 load_dotenv()
@@ -681,6 +693,165 @@ class Stats(commands.Cog):
         embed.add_field(
             name="Worst Tier",
             value=f"{worst_tier[0]} ({worst_tier[1]['delta_sum'] / worst_tier[1]['events']:+.0f} avg)",  # noqa: E501
+            inline=True,
+        )
+        embed.add_field(
+            name="Most Played",
+            value=f"{most_played[0]} ({most_played[1]['events']} events)",
+            inline=True,
+        )
+
+        embed.set_footer(
+            text="MKCentral Lounge",
+            icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
+        )
+        embed.set_thumbnail(url=rank_data["url"])
+
+        await interaction.followup.send(embed=embed, file=file)
+
+    @app_commands.command(
+        name="fs", description="Show MKWorld Player Performance by Format"
+    )
+    @app_commands.describe(
+        name="Lounge name, discord id, mkc id (optional)",
+        season="Season number (default: current season)",
+        game_mode="Game mode (default: 24p)",
+    )
+    @app_commands.choices(
+        game_mode=[
+            app_commands.Choice(name="24p", value="24p"),
+            app_commands.Choice(name="12p", value="12p"),
+        ]
+    )
+    async def fs(
+        self,
+        interaction: discord.Interaction,
+        name: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = "24p",
+    ):
+        await interaction.response.defer()
+
+        if name is None:
+            name = str(interaction.user.id)
+        player = await data_handler.fetch_player_info(name, season, game_mode)
+
+        if player is None:
+            await interaction.followup.send(
+                f"Player '{name}' not found.", ephemeral=True
+            )
+            return
+
+        table_events = [
+            e for e in player.get("mmrChanges", []) if e.get("reason") == "Table"
+        ]
+        if not table_events:
+            await interaction.followup.send(
+                "You have to play at least 1 match to check your format stats.",
+                ephemeral=True,
+            )
+            return
+
+        buckets = {}
+        for e in table_events:
+            f = _derive_format(e.get("numTeams", 0) or 0, game_mode)
+            b = buckets.setdefault(
+                f,
+                {
+                    "events": 0,
+                    "delta_sum": 0,
+                    "rank_sum": 0,
+                    "score_sum": 0,
+                    "wins": 0,
+                    "win_delta_sum": 0,
+                    "loss_delta_sum": 0,
+                    "losses": 0,
+                    "firsts": 0,
+                    "tops": 0,
+                    "bottoms": 0,
+                },
+            )
+            b["events"] += 1
+            delta = e.get("mmrDelta", 0)
+            rank = e.get("rank", 0)
+            num_teams = e.get("numTeams", 1) or 1
+            b["delta_sum"] += delta
+            b["rank_sum"] += rank
+            b["score_sum"] += e.get("score", 0)
+            if delta > 0:
+                b["wins"] += 1
+                b["win_delta_sum"] += delta
+            elif delta < 0:
+                b["losses"] += 1
+                b["loss_delta_sum"] += delta
+            if rank == 1:
+                b["firsts"] += 1
+            if rank <= num_teams * 0.25:
+                b["tops"] += 1
+            if rank > num_teams * 0.75:
+                b["bottoms"] += 1
+
+        sorted_formats = sorted(
+            buckets.items(),
+            key=lambda kv: (
+                FORMAT_ORDER.index(kv[0])
+                if kv[0] in FORMAT_ORDER
+                else len(FORMAT_ORDER)
+            ),
+        )
+
+        format_rows = []
+        for format_name, b in sorted_formats:
+            n = b["events"]
+            format_rows.append(
+                {
+                    "format": format_name,
+                    "n": n,
+                    "win_rate": b["wins"] / n * 100,
+                    "avg_delta": b["delta_sum"] / n,
+                    "total": b["delta_sum"],
+                    "avg_rank": b["rank_sum"] / n,
+                    "avg_score": b["score_sum"] / n,
+                    "firsts": b["firsts"],
+                    "tops": b["tops"],
+                    "bottoms": b["bottoms"],
+                }
+            )
+
+        plot_image = create_formats_plot(
+            format_rows=format_rows,
+            season=season,
+            player_name=player["name"],
+            country_code=player.get("countryCode", ""),
+            game_mode=game_mode,
+        )
+        file = discord.File(plot_image, filename="formats.png")
+
+        rank_data = constants.get_rank_data(season)[player["rank"]]
+        embed = discord.Embed(
+            title=f"S{season} Formats - MKWorld{game_mode.upper()}",
+            url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}?p={game_mode[0:1]}",
+            description=f"### {player['name']} [{player['countryCode']}]",
+            colour=int(f"0x{rank_data['color'][1:]}", 16),
+            timestamp=dt.datetime.now(dt.UTC),
+        )
+        embed.set_image(url="attachment://formats.png")
+
+        best_format = max(
+            sorted_formats, key=lambda kv: kv[1]["delta_sum"] / kv[1]["events"]
+        )
+        worst_format = min(
+            sorted_formats, key=lambda kv: kv[1]["delta_sum"] / kv[1]["events"]
+        )
+        most_played = max(sorted_formats, key=lambda kv: kv[1]["events"])
+        embed.add_field(
+            name="Best Format",
+            value=f"{best_format[0]} ({best_format[1]['delta_sum'] / best_format[1]['events']:+.0f} avg)",  # noqa: E501
+            inline=True,
+        )
+        embed.add_field(
+            name="Worst Format",
+            value=f"{worst_format[0]} ({worst_format[1]['delta_sum'] / worst_format[1]['events']:+.0f} avg)",  # noqa: E501
             inline=True,
         )
         embed.add_field(
