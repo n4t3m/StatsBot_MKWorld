@@ -14,6 +14,7 @@ import common.data_handler as data_handler
 from common.calculation import calc_mmr_deltas
 from common.plotting import (
     create_h2h_plot,
+    create_partner_plot,
     create_plot,
     create_scores_plot,
     create_streak_plot,
@@ -880,6 +881,182 @@ class Stats(commands.Cog):
             timestamp=dt.datetime.now(dt.UTC),
         )
         embed.set_image(url="attachment://h2h.png")
+        embed.set_footer(
+            text="MKCentral Lounge",
+            icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
+        )
+        await interaction.followup.send(embed=embed, file=file)
+
+    @app_commands.command(
+        name="partner",
+        description="Compare two players' shared matches as partners",
+    )
+    @app_commands.describe(
+        name1="First player (lounge name, discord id, or mkc id)",
+        name2="Second player (defaults to you)",
+        season="Season number (default: current season)",
+        game_mode="Game mode (default: 24p)",
+    )
+    @app_commands.choices(
+        game_mode=[
+            app_commands.Choice(name="24p", value="24p"),
+            app_commands.Choice(name="12p", value="12p"),
+        ]
+    )
+    async def partner(
+        self,
+        interaction: discord.Interaction,
+        name1: str,
+        name2: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = "24p",
+    ):
+        await interaction.response.defer()
+
+        if name2 is None:
+            name2 = name1
+            name1 = str(interaction.user.id)
+
+        p1 = await data_handler.fetch_player_info(name1, season, game_mode)
+        if p1 is None:
+            await interaction.followup.send(
+                f"Player '{name1}' not found.", ephemeral=True
+            )
+            return
+        p2 = await data_handler.fetch_player_info(name2, season, game_mode)
+        if p2 is None:
+            await interaction.followup.send(
+                f"Player '{name2}' not found.", ephemeral=True
+            )
+            return
+
+        if p1.get("playerId") == p2.get("playerId"):
+            await interaction.followup.send(
+                "You can't compare a player to themselves.", ephemeral=True
+            )
+            return
+
+        c1 = {
+            e["changeId"]: e
+            for e in p1.get("mmrChanges", [])
+            if e.get("reason") == "Table" and "changeId" in e
+        }
+        c2 = {
+            e["changeId"]: e
+            for e in p2.get("mmrChanges", [])
+            if e.get("reason") == "Table" and "changeId" in e
+        }
+        shared = set(c1) & set(c2)
+
+        pid1, pid2 = p1["playerId"], p2["playerId"]
+        partner_ids = sorted(
+            [
+                cid
+                for cid in shared
+                if pid2 in (c1[cid].get("partnerIds") or [])
+                or pid1 in (c2[cid].get("partnerIds") or [])
+            ],
+            key=lambda k: c1[k]["time"],
+            reverse=True,
+        )
+
+        if not partner_ids:
+            await interaction.followup.send(
+                f"{p1['name']} and {p2['name']} have not played as partners "
+                f"in {game_mode} S{season}.",
+                ephemeral=True,
+            )
+            return
+
+        n = len(partner_ids)
+        deltas = [c1[cid].get("mmrDelta", 0) for cid in partner_ids]
+        wins = sum(1 for d in deltas if d > 0)
+        losses = sum(1 for d in deltas if d < 0)
+        total_delta = sum(deltas)
+
+        scores1 = [c1[cid].get("score", 0) for cid in partner_ids]
+        scores2 = [c2[cid].get("score", 0) for cid in partner_ids]
+        ranks = [c1[cid].get("rank", 0) for cid in partner_ids]
+
+        p1_avg = sum(scores1) / n
+        p2_avg = sum(scores2) / n
+        avg_rank = sum(ranks) / n
+        win_rate = wins / n
+        p1_best = max(scores1)
+        p2_best = max(scores2)
+
+        def _best_performance(scorer_changes, other_changes):
+            best_cid = max(
+                partner_ids, key=lambda k: scorer_changes[k].get("score", 0)
+            )
+            e_self = scorer_changes[best_cid]
+            e_other = other_changes[best_cid]
+            return {
+                "date": e_self["time"][:10],
+                "tier": e_self.get("tier", "?"),
+                "table_id": best_cid,
+                "self_score": e_self.get("score", 0),
+                "other_score": e_other.get("score", 0),
+                "rank": e_self.get("rank", 0),
+                "num_teams": e_self.get("numTeams", 0),
+                "delta": e_self.get("mmrDelta", 0),
+            }
+
+        p1_best_match = _best_performance(c1, c2)
+        p2_best_match = _best_performance(c2, c1)
+
+        recent = []
+        for cid in partner_ids[:10]:
+            e1 = c1[cid]
+            e2 = c2[cid]
+            recent.append(
+                {
+                    "date": e1["time"][:10],
+                    "tier": e1.get("tier", "?"),
+                    "p1_score": e1.get("score", 0),
+                    "p2_score": e2.get("score", 0),
+                    "rank": e1.get("rank", 0),
+                    "num_teams": e1.get("numTeams", 0),
+                    "delta": e1.get("mmrDelta", 0),
+                }
+            )
+
+        stats = {
+            "p1_name": p1["name"],
+            "p2_name": p2["name"],
+            "p1_country": p1.get("countryCode", ""),
+            "p2_country": p2.get("countryCode", ""),
+            "p1_mmr": p1.get("mmr"),
+            "p2_mmr": p2.get("mmr"),
+            "shared": n,
+            "wins": wins,
+            "losses": losses,
+            "total_delta": total_delta,
+            "p1_avg_score": p1_avg,
+            "p2_avg_score": p2_avg,
+            "p1_best_score": p1_best,
+            "p2_best_score": p2_best,
+            # avg_rank is computed and exposed for future use but not
+            # currently rendered in the partner plot.
+            "avg_rank": avg_rank,
+            "win_rate": win_rate,
+            "p1_best_match": p1_best_match,
+            "p2_best_match": p2_best_match,
+            "recent": recent,
+        }
+
+        plot_image = create_partner_plot(
+            stats=stats, season=season, game_mode=game_mode
+        )
+        file = discord.File(plot_image, filename="partner.png")
+
+        embed = discord.Embed(
+            title=f"S{season} Partner - MKWorld{game_mode.upper()}",
+            description=f"### {p1['name']} & {p2['name']}",
+            colour=0x1DA3DD,
+            timestamp=dt.datetime.now(dt.UTC),
+        )
+        embed.set_image(url="attachment://partner.png")
         embed.set_footer(
             text="MKCentral Lounge",
             icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
