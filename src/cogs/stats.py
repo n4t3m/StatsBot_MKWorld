@@ -223,6 +223,7 @@ class Stats(commands.Cog):
         name="Lounge name, discord ids, mkc ids (optional)",
         season="Season number (default: current season)",
         game_mode="Game mode (default: 24p)",
+        last="Only show stats for the last N matches",
     )
     @app_commands.choices(
         game_mode=[
@@ -236,6 +237,7 @@ class Stats(commands.Cog):
         name: str | None = None,
         season: int | None = int(os.getenv("CURRENT_SEASON")),
         game_mode: str | None = "24p",
+        last: int | None = None,
     ):
         await interaction.response.defer()
 
@@ -263,7 +265,34 @@ class Stats(commands.Cog):
 
         # Generate MMR history plot
         mmr_changes = list(reversed(player["mmrChanges"]))
-        mmr_history = [change["newMmr"] for change in mmr_changes]
+
+        if last is not None and last > 0:
+            table_events = [e for e in mmr_changes if e.get("reason") == "Table"]
+            table_events = table_events[-last:]
+            if not table_events:
+                await interaction.followup.send(
+                    f"No matches found in the last {last}.",
+                    ephemeral=True,
+                )
+                return
+            mmr_history = [e["newMmr"] for e in table_events]
+
+            n = len(table_events)
+            scores = [e.get("score", 0) for e in table_events]
+            deltas = [e.get("mmrDelta", 0) for e in table_events]
+            wins = sum(1 for d in deltas if d > 0)
+            losses = sum(1 for d in deltas if d < 0)
+            net_delta = sum(deltas)
+            last10 = scores[-10:]
+            no_sq_scores = [e.get("score", 0) for e in table_events if e.get("tier") != "SQ"]
+            flat_partner = [p for e in table_events for p in (e.get("partnerScores") or [])]
+
+            stat_peak_mmr = max(e.get("newMmr", 0) for e in table_events)
+            stat_largest_gain = max(deltas)
+            stat_partner_avg = sum(flat_partner) / len(flat_partner) if flat_partner else None
+        else:
+            mmr_history = [change["newMmr"] for change in mmr_changes]
+
         plot_image = create_plot(
             mmr_history,
             season=season,
@@ -272,9 +301,10 @@ class Stats(commands.Cog):
         )
         file = discord.File(plot_image, filename="mmr_chart.png")
 
+        title_suffix = f" · Last {n}" if last is not None and last > 0 else ""
         # create embed with player stats
         embed = discord.Embed(
-            title=f"S{season} Stats - MKWorld{game_mode.upper()}",
+            title=f"S{season} Stats{title_suffix} - MKWorld{game_mode.upper()}",
             url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}?p={game_mode[0:1]}",
             description=f"### {player['name']} [{player['countryCode']}]",
             colour=int(f"0x{rank_data['color'][1:]}", 16),
@@ -283,62 +313,100 @@ class Stats(commands.Cog):
 
         embed.set_image(url="attachment://mmr_chart.png")
         embed.add_field(name="MMR", value=f"{player['mmr']}", inline=True)
-        try:
-            embed.add_field(name="Peak MMR", value=f"{player['maxMmr']}", inline=True)
-        except KeyError:
-            embed.add_field(name="Peak MMR", value="N/A", inline=True)
-        embed.add_field(
-            name="Events Played", value=f"{player['eventsPlayed']}", inline=True
-        )
 
-        # Row 2: Win rate and last 10
-        embed.add_field(
-            name="Win Rate", value=f"{player['winRate'] * 100:.1f}%", inline=True
-        )
-        embed.add_field(
-            name="Last 10 Matches",
-            value=f"{player['winLossLastTen']}（{player['gainLossLastTen']}）",
-            inline=True,
-        )
+        if last is not None and last > 0:
+            embed.add_field(name="Peak MMR", value=f"{stat_peak_mmr}", inline=True)
+            embed.add_field(name="Events Played", value=f"{n}", inline=True)
+            embed.add_field(
+                name="Win Rate", value=f"{wins / n * 100:.1f}%", inline=True
+            )
+            embed.add_field(
+                name="W/L Record",
+                value=f"{wins}W-{losses}L（{net_delta:+d}）",
+                inline=True,
+            )
+        else:
+            try:
+                embed.add_field(name="Peak MMR", value=f"{player['maxMmr']}", inline=True)
+            except KeyError:
+                embed.add_field(name="Peak MMR", value="N/A", inline=True)
+            embed.add_field(
+                name="Events Played", value=f"{player['eventsPlayed']}", inline=True
+            )
+            embed.add_field(
+                name="Win Rate", value=f"{player['winRate'] * 100:.1f}%", inline=True
+            )
+            embed.add_field(
+                name="Last 10 Matches",
+                value=f"{player['winLossLastTen']}（{player['gainLossLastTen']}）",
+                inline=True,
+            )
         # Empty field to keep grid aligned (Discord embeds use 3-column layout)
         embed.add_field(name="\u200b", value="\u200b", inline=True)
 
-        # Row 3: Score stats
-        embed.add_field(
-            name="Avg. Score", value=f"{player['averageScore']:.1f}", inline=True
-        )
-        embed.add_field(
-            name="Avg. Score Last10",
-            value=f"{player['averageLastTen']:.1f}",
-            inline=True,
-        )
-        try:
+        if last is not None and last > 0:
             embed.add_field(
-                name="Largest Gain", value=player["largestGain"], inline=True
+                name="Avg. Score", value=f"{sum(scores) / n:.1f}", inline=True
             )
-        except KeyError:
-            embed.add_field(name="Largest Gain", value="N/A", inline=True)
-
-        # Row 4: Score stats of No SQ
-        embed.add_field(
-            name="Avg. Score (No SQ)",
-            value=f"{player['noSQAverageScore']:.1f}",
-            inline=True,
-        )
-        embed.add_field(
-            name="Avg. Score Last10 (No SQ)",
-            value=f"{player['noSQAverageLastTen']:.1f}",
-            inline=True,
-        )
-
-        try:
             embed.add_field(
-                name="Partner Avg.",
-                value=f"{player['partnerAverage']:.1f}",
+                name="Avg. Score Last10",
+                value=f"{sum(last10) / len(last10):.1f}",
                 inline=True,
             )
-        except KeyError:
-            embed.add_field(name="Partner Avg.", value="N/A", inline=True)
+            embed.add_field(
+                name="Largest Gain", value=f"{stat_largest_gain}", inline=True
+            )
+            embed.add_field(
+                name="Avg. Score (No SQ)",
+                value=f"{sum(no_sq_scores) / len(no_sq_scores):.1f}" if no_sq_scores else "N/A",
+                inline=True,
+            )
+            embed.add_field(
+                name="Avg. Score Last10 (No SQ)",
+                value=f"{sum(no_sq_scores[-10:]) / len(no_sq_scores[-10:]):.1f}" if no_sq_scores else "N/A",
+                inline=True,
+            )
+            embed.add_field(
+                name="Partner Avg.",
+                value=f"{stat_partner_avg:.1f}" if stat_partner_avg is not None else "N/A",
+                inline=True,
+            )
+        else:
+            # Row 3: Score stats
+            embed.add_field(
+                name="Avg. Score", value=f"{player['averageScore']:.1f}", inline=True
+            )
+            embed.add_field(
+                name="Avg. Score Last10",
+                value=f"{player['averageLastTen']:.1f}",
+                inline=True,
+            )
+            try:
+                embed.add_field(
+                    name="Largest Gain", value=player["largestGain"], inline=True
+                )
+            except KeyError:
+                embed.add_field(name="Largest Gain", value="N/A", inline=True)
+
+            # Row 4: Score stats of No SQ
+            embed.add_field(
+                name="Avg. Score (No SQ)",
+                value=f"{player['noSQAverageScore']:.1f}",
+                inline=True,
+            )
+            embed.add_field(
+                name="Avg. Score Last10 (No SQ)",
+                value=f"{player['noSQAverageLastTen']:.1f}",
+                inline=True,
+            )
+            try:
+                embed.add_field(
+                    name="Partner Avg.",
+                    value=f"{player['partnerAverage']:.1f}",
+                    inline=True,
+                )
+            except KeyError:
+                embed.add_field(name="Partner Avg.", value="N/A", inline=True)
 
         embed.set_footer(
             text="MKCentral Lounge",
